@@ -301,7 +301,7 @@ function probeDestinyLayout(encode) {
     return { ok: false, error: `the tree's ball encoder threw: ${error && error.message ? error.message : error}`, balls: 0,
       warpOff: null };
   }
-  const decoded = decodeBallState(buffer);
+  let decoded = decodeBallState(buffer);
   const compare = (index, expected, problems) => {
     const ball = decoded.balls[index];
     if (!ball) return;
@@ -321,6 +321,30 @@ function probeDestinyLayout(encode) {
   const ok = problems.length === 0;
   const warpProblems = [];
   if (ok) compare(PROBE_WARP_INDEX, PROBE_WARP_EXPECT, warpProblems);
+  if (ok && warpProblems.length) {
+    // Retail-tick trees keep the Ball's goto point and minimum range directly
+    // on the entity. Probe that input contract too; retain all layout checks
+    // and the original warning if neither representation round-trips.
+    const original = decoded;
+    try {
+      const entities = PROBE_ENTITIES.map((entity, index) => index !== PROBE_WARP_INDEX
+        ? { ...entity }
+        : { ...entity, targetPoint: { ...PROBE_WARP_EXPECT.targetPoint },
+          warpMinRange: PROBE_WARP_EXPECT.minimumRange, effectStamp: entity.warpState.effectStamp,
+          warpDistance: entity.warpState.totalDistance });
+      decoded = decodeBallState(encode(PROBE_STAMP, entities));
+      const retryProblems = [];
+      if (decoded.error) retryProblems.push(decoded.error);
+      if (decoded.stamp !== PROBE_STAMP) retryProblems.push("stamp changed");
+      if (decoded.balls.length !== PROBE_EXPECT.length) retryProblems.push("ball count changed");
+      PROBE_EXPECT.forEach((expected, index) => compare(index, expected, retryProblems));
+      compare(PROBE_WARP_INDEX, PROBE_WARP_EXPECT, retryProblems);
+      if (retryProblems.length === 0) warpProblems.length = 0;
+    } catch (_error) {
+      // An unsupported alternate contract leaves the original diagnostic.
+    }
+    decoded = original;
+  }
   return {
     ok,
     error: ok ? null : `this tree's destiny ball layout is not the one the decoder reads: ${problems.slice(0, 3).join("; ")}`,
