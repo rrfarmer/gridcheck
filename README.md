@@ -21,7 +21,7 @@ Windows, use forward slashes or quote the paths.
 **1. Get the tool.**
 
 ```bash
-git clone https://github.com/Clogs/gridcheck.git
+git clone https://github.com/rrfarmer/gridcheck.git
 cd gridcheck
 ```
 
