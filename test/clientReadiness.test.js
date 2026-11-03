@@ -27,7 +27,7 @@ function setup() {
   const exe = path.join(treeRoot, "client", "tq", "bin64", "exefile.exe");
   const resfiles = path.join(treeRoot, "client", "ResFiles");
   const ports = nativeClientPorts(portsForSlot(141), true);
-  const output = `Client: ${exe} /port:${ports.game}\nResFiles: ${resfiles}\nProxy: http://127.0.0.1:${ports.gateway}/\nDry run complete. Client launch skipped.`;
+  const output = `    Client: ${exe} /port:${ports.game}\n    ResFiles: ${resfiles}\n    Proxy:  http://127.0.0.1:${ports.gateway}/\nDry run complete. Client launch skipped.`;
   return { treeRoot, exe, resfiles, ports, dataRoot: path.join(treeRoot, "_local"),
     platform: "win32", env: {}, readText: () => 'if "%EVEJS_DRY_RUN%"=="1"',
     run: () => ({ status: 0, stdout: output }), output };

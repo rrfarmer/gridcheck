@@ -70,7 +70,7 @@ function clientEnvironment({ env = process.env, resfiles, gatewayPort }) {
 // Run the real launcher's gates, rather than maintaining a partial second
 // implementation. No login token exists yet. Closed stdin prevents a failed
 // batch gate's pause from hanging automation; the timeout also fails closed.
-function prepareClientLaunch({ treeRoot, exe, resfiles, ports, dataRoot, env = process.env,
+function prepareClientLaunch({ treeRoot, exe, resfiles, ports, dataRoot, logFile = null, env = process.env,
   platform = process.platform, run = spawnSync, readText = (file) => fs.readFileSync(file, "utf8") }) {
   if (platform !== "win32") throw new Error("native client launch requires Windows and the tree's Play.bat preflight");
   if (!ports || ports.xmpp !== 5222 || ports.cdn !== 443) {
@@ -90,14 +90,22 @@ function prepareClientLaunch({ treeRoot, exe, resfiles, ports, dataRoot, env = p
     timeout: 180000, maxBuffer: 4 * 1024 * 1024,
   });
   const output = `${checked.stdout || ""}\n${checked.stderr || ""}`;
+  if (logFile) {
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.writeFileSync(logFile, output);
+  }
   if (checked.error || checked.status !== 0 || !output.includes("Dry run complete. Client launch skipped.")) {
     throw new Error(`Play.bat preflight failed${checked.error ? `: ${checked.error.message}` : ""}:\n${output.slice(-12000)}`);
   }
   // Play's batch config may override a shell's client path. Require its actual
   // resolved target/cache/endpoints to match the process we are about to spawn.
-  const normalized = output.replaceAll("\\", "/").toLowerCase();
-  const expected = [`Client: ${exe} `, `ResFiles: ${resfiles}`, `Proxy: http://127.0.0.1:${ports.gateway}`, `/port:${ports.game}`];
-  if (expected.some((text) => !normalized.includes(text.replaceAll("\\", "/").toLowerCase()))) {
+  const fields = Object.fromEntries([...output.matchAll(/(?:^|\n)\s*(Client|ResFiles|Proxy):[ \t]*([^\r\n]*)/g)]
+    .map((match) => [match[1], match[2].trim()]));
+  const normalized = (text) => String(text || "").replaceAll("\\", "/").toLowerCase();
+  const checkedPort = /(?:^|\s)\/port:(\d+)(?:\s|$)/.exec(fields.Client || "");
+  if (!normalized(fields.Client).startsWith(`${normalized(exe)} `) ||
+      normalized(fields.ResFiles) !== normalized(resfiles) ||
+      fields.Proxy !== `http://127.0.0.1:${ports.gateway}/` || Number(checkedPort && checkedPort[1]) !== ports.game) {
     throw new Error("Play.bat checked a different client, cache or endpoint; configure EvEJSConfig.bat to match this launch before testing");
   }
   return { env: launchEnv, output };

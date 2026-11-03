@@ -1047,9 +1047,7 @@ async function clientLaunch(handshake, flags) {
   }
   console.log("checking native client setup through Play.bat (dry run)...");
   const prepared = clientTools.prepareClientLaunch({ treeRoot: REPO_ROOT, exe, resfiles,
-    ports: handshake.ports, dataRoot: CONFIG.dataRoot });
-  fs.mkdirSync(path.join(E2E_DIR, "client"), { recursive: true });
-  fs.writeFileSync(path.join(E2E_DIR, "client", "play-preflight.log"), prepared.output);
+    ports: handshake.ports, dataRoot: CONFIG.dataRoot, logFile: path.join(E2E_DIR, "client", "play-preflight.log") });
   console.log("Play.bat patch, resources, certificate trust and offline/TLS gates passed");
   // Character names are unique server-wide, so not login's "Agent Observer".
   const { accountID, characterID } = await ensureCharacter(username, flags.name ? String(flags.name) : "Client Observer");
