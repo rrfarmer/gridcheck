@@ -15,6 +15,7 @@
 //   createGridWatch     runs the differ and the hooks on a timer and streams the events.
 
 const { createDivergenceChecker } = require("./destiny");
+const { effectStatesOf } = require("./entities");
 
 const TRACKED_KINDS = new Set(["ship", "drone", "fighter", "wreck", "container", "structure"]);
 // Differ events after which the grid is a new one; open divergences are dropped.
@@ -26,8 +27,18 @@ const WARP_IN_SETTLE_MS = 30_000;
 // A killmail is written after the wreck appears, by a worker.
 const KILLMAIL_WAIT_MS = 20_000;
 const WRECK_MATCH_METERS = 20_000;
+// Since EveJS 261028.1 a wreck reaches the grid a second or two after its
+// ship has gone. A ship that goes outside warp waits this long for one before
+// it is a LEAVE.
+const WRECK_WAIT_MS = 5_000;
 // A ship covers well under this in one sample outside warp.
 const SELF_MOVED_METERS = 1_000_000;
+// CAPACITOR events: a quarter band down, empty at or under this, full again from
+// this. A band climbs back only this many points past its lower edge, so a
+// ship hovering on a boundary reports once, not every sample.
+const CAP_EMPTY_PCT = 5;
+const CAP_FULL_PCT = 99.9;
+const CAP_RISE_MARGIN_PCT = 5;
 // POS events (watch option `positions`): after any sample with an on-grid
 // event, and at least this often while in space.
 const POSITIONS = Object.freeze({ everyMs: 10_000, rangeMeters: 1_000_000, maxBalls: 150 });
@@ -59,6 +70,16 @@ function healthBand(ratio) {
   if (ratio === null || ratio === undefined || !Number.isFinite(Number(ratio))) return null;
   const value = Number(ratio);
   return value >= 0.999 ? 4 : Math.max(0, Math.floor(value * 4));
+}
+
+// Capacitor bands: 0-24, 25-49, 50-74 and 75-100 (full is not its own band: a
+// ship running a module is never exactly full).
+function capBand(pct) {
+  return Math.min(3, Math.max(0, Math.floor(pct / 25)));
+}
+
+function stopReasonOf(state) {
+  return state && state.stopReason ? String(state.stopReason) : null;
 }
 
 function centreDistance(a, b) {
@@ -120,6 +141,12 @@ function snapshot(row) {
       hull: healthBand(row.hullRatio),
     },
     locks: new Set(Array.isArray(row.lockedTargetIDs) ? row.lockedTargetIDs : []),
+    anchor: row.anchor === true,
+    // Capacitor 0-100 (null: none), and the modules running as moduleID ->
+    // { state, moduleName } holding the live effect objects (null: the
+    // entity has none to read, so there is nothing to compare).
+    capPct: Number.isFinite(Number(row.capacitorPct)) && row.capacitorPct !== null ? Number(row.capacitorPct) : null,
+    modules: row.moduleStates instanceof Map ? row.moduleStates : null,
     groupKey: row.groupKey || null,
     ext: row.ext ? { ...row.ext } : null,
     // A plugin's working data for its own onGrid hook; never on an event.
@@ -179,7 +206,7 @@ function positionFrame(grid, { rangeMeters = POSITIONS.rangeMeters, maxBalls = P
   let omitted = 0;
   for (const row of rows) {
     if (!row || !row.position) continue;
-    const near = row.isSelf || (row.distanceMeters !== null && row.distanceMeters <= rangeMeters);
+    const near = row.isSelf || row.anchor === true || (row.distanceMeters !== null && row.distanceMeters <= rangeMeters);
     if (!near || balls.length >= maxBalls) {
       omitted += 1;
       continue;
@@ -209,7 +236,9 @@ function positionFrame(grid, { rangeMeters = POSITIONS.rangeMeters, maxBalls = P
     kind: "POS",
     systemID: grid.solarSystemID || null,
     systemName: grid.systemName || null,
-    selfID: toPositiveInt(grid.self && grid.self.itemID) || null,
+    // Around an anchor (watch --at) the anchor is the centre of the frame.
+    selfID: toPositiveInt(grid.self && grid.self.itemID) || toPositiveInt(grid.anchor && grid.anchor.itemID) || null,
+    ...(grid.anchor ? { anchor: true } : {}),
     rangeMeters,
     balls,
     omitted,
@@ -222,13 +251,29 @@ function positionFrame(grid, { rangeMeters = POSITIONS.rangeMeters, maxBalls = P
 // hidden, ...). A hook may replace an entry's ext with a copy, before the
 // differ's own events are built from it; its events follow the differ's.
 // ctx: { atMs, selfID, labelFor(itemID) }. `timed(name, fn)` times each call.
-function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) {
+// modules: false leaves out MODULE and CAPACITOR events. A watch around an
+// anchor (grid.anchor, no session) has no self; the anchor takes its place in
+// the baseline's locks, the MOVED check and the off-grid scan's position.
+function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn(), modules = true } = {}) {
   let previous = null;
   let selfID = 0;
+  let anchorID = 0;
+  // itemID -> { band, empty, low, lastPct }: what the last CAPACITOR event said.
+  const capStates = new Map();
   let systemID = 0;
   let docked = false;
   // group key -> { firstSeenAtMs, itemIDs }
   const pendingArrivals = new Map();
+  // itemID -> { entry, self, atMs }: a ship that went outside warp with no
+  // wreck yet (WRECK_WAIT_MS).
+  const awaitingWreck = new Map();
+
+  // A new grid: whoever was still waiting for a wreck left the old one.
+  function flushAwaitingWreck(events) {
+    const leaving = [...awaitingWreck.values()].filter((waiting) => !waiting.self).map((waiting) => waiting.entry);
+    awaitingWreck.clear();
+    for (const group of groupByKey(leaving)) events.push(groupEvent("LEAVE", group, { warped: false }));
+  }
 
   function labelFor(itemID, current) {
     const id = toPositiveInt(itemID);
@@ -249,6 +294,102 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
       groupKey: entry.groupKey,
       ext: entry.ext,
     }));
+  }
+
+  // A module on a ship turned on, off, or began a new activation since the
+  // last sample. A weapon cycling inside one activation is the same effect
+  // object with the same startedAtMs, so it says nothing. Two samples cannot
+  // see a module that went off and on between them: it shows as restarted.
+  function moduleEvents(before, entry, current) {
+    if (!modules || !before.modules || !entry.modules) return [];
+    const events = [];
+    const make = (moduleID, held, extra) => ({
+      kind: "MODULE",
+      itemID: entry.itemID,
+      label: entry.label,
+      moduleID,
+      moduleName: held.moduleName,
+      effectName: held.state.effectName ? String(held.state.effectName) : null,
+      on: true,
+      restarted: false,
+      targetID: toPositiveInt(held.state.targetID) || null,
+      targetLabel: labelFor(held.state.targetID, current),
+      reason: null,
+      capPct: entry.capPct,
+      groupKey: entry.groupKey,
+      ext: entry.ext,
+      ...extra,
+    });
+    for (const [moduleID, now] of entry.modules) {
+      const was = before.modules.get(moduleID);
+      if (!was) {
+        events.push(make(moduleID, now, {}));
+      } else if (was.state !== now.state || was.state.startedAtMs !== now.state.startedAtMs) {
+        events.push(make(moduleID, now, { restarted: true, reason: stopReasonOf(was.state) }));
+      }
+    }
+    for (const [moduleID, was] of before.modules) {
+      if (!entry.modules.has(moduleID)) {
+        events.push(make(moduleID, was, { on: false, reason: stopReasonOf(was.state) }));
+      }
+    }
+    return events;
+  }
+
+  // One CAPACITOR event per ship per sample at most: empty beats a band
+  // crossing, and full only follows a drop the watch reported (or a ship first
+  // seen below the top band).
+  function capacitorEvent(entry) {
+    if (!modules) return null;
+    const pct = entry.capPct;
+    if (pct === null) {
+      capStates.delete(entry.itemID);
+      return null;
+    }
+    const band = capBand(pct);
+    const state = capStates.get(entry.itemID);
+    if (!state) {
+      capStates.set(entry.itemID, { band, empty: pct <= CAP_EMPTY_PCT, low: band < 3, lastPct: pct });
+      return null;
+    }
+    let reported = null;
+    if (pct >= CAP_FULL_PCT && state.low) {
+      reported = "full";
+      state.band = 3;
+      state.empty = false;
+      state.low = false;
+    } else if (pct <= CAP_EMPTY_PCT) {
+      if (!state.empty) reported = "empty";
+      state.empty = true;
+      state.band = 0;
+      state.low = true;
+    } else {
+      if (state.empty && pct >= CAP_EMPTY_PCT + CAP_RISE_MARGIN_PCT) {
+        state.empty = false;
+        state.band = band;
+      }
+      if (!state.empty) {
+        if (band < state.band) {
+          reported = "down";
+          state.band = band;
+          state.low = true;
+        } else if (band > state.band && pct >= band * 25 + CAP_RISE_MARGIN_PCT) {
+          state.band = band;
+        }
+      }
+    }
+    const fromPct = state.lastPct;
+    state.lastPct = pct;
+    return reported ? {
+      kind: "CAPACITOR",
+      itemID: entry.itemID,
+      label: entry.label,
+      state: reported,
+      fromPct: Math.round(fromPct),
+      toPct: Math.round(pct),
+      groupKey: entry.groupKey,
+      ext: entry.ext,
+    } : null;
   }
 
   function hookEvents(current, atMs, selfNow) {
@@ -274,15 +415,18 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
       security: grid.security,
       self: grid.self ? { itemID: grid.self.itemID, typeName: grid.self.typeName, mode: grid.self.mode,
         protection: grid.self.protection } : null,
+      ...(grid.anchor ? { anchor: { itemID: grid.anchor.itemID, name: grid.anchor.name, typeName: grid.anchor.typeName,
+        mode: grid.anchor.mode, protection: grid.anchor.protection, rangeMeters: grid.rangeMeters || null } } : {}),
       tracked: current.size,
     }];
-    const others = [...current.values()].filter((entry) => !entry.isSelf);
+    const others = [...current.values()].filter((entry) => !entry.isSelf && !entry.anchor);
     for (const group of groupByKey(others)) events.push(groupEvent("PRESENT", group));
     for (const entry of current.values()) {
-      const involvingSelf = entry.isSelf
+      const involvingFocus = entry.isSelf || entry.anchor
         ? entry.locks
-        : new Set([...entry.locks].filter((targetID) => targetID === selfID));
-      events.push(...lockEvents(entry, involvingSelf, true, current));
+        : new Set([...entry.locks].filter((targetID) => targetID === selfID || (anchorID && targetID === anchorID)));
+      events.push(...lockEvents(entry, involvingFocus, true, current));
+      capacitorEvent(entry);
     }
     return events;
   }
@@ -290,6 +434,7 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
   function step(grid, atMs) {
     const events = [];
     if (!grid || !grid.inSpace) {
+      flushAwaitingWreck(events);
       if (!docked) {
         events.push({ kind: "DOCKED", systemID: grid && grid.solarSystemID, systemName: grid && grid.systemName,
           stationID: grid && (grid.stationID || grid.structureID) });
@@ -301,6 +446,7 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
     }
     docked = false;
     if (systemID && grid.solarSystemID !== systemID) {
+      flushAwaitingWreck(events);
       events.push({ kind: "SYSTEM", fromSystemID: systemID, toSystemID: grid.solarSystemID,
         toSystemName: grid.systemName, security: grid.security });
       previous = null;
@@ -311,16 +457,19 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
     const rows = (Array.isArray(grid.entities) ? grid.entities : []).filter((row) => TRACKED_KINDS.has(row.kind));
     const current = new Map(rows.map((row) => [row.itemID, snapshot(row)]));
     const selfNow = toPositiveInt(grid.self && grid.self.itemID);
+    const anchorNow = toPositiveInt(grid.anchor && grid.anchor.itemID);
     const pluginEvents = hookEvents(current, atMs, selfNow);
 
-    // Self jumped (warp, /tr to a celestial): this is a new grid, not a grid
-    // everybody else left.
-    if (previous && selfNow && selfNow === selfID) {
-      const before = previous.get(selfID);
-      const now = current.get(selfNow);
+    // Self (or the anchor) jumped (warp, /tr to a celestial): this is a new
+    // grid, not a grid everybody else left.
+    const focusNow = selfNow || anchorNow;
+    if (previous && focusNow && focusNow === (selfID || anchorID)) {
+      const before = previous.get(focusNow);
+      const now = current.get(focusNow);
       const moved = before && now ? centreDistance(before.position, now.position) : null;
       if (moved !== null && moved > SELF_MOVED_METERS) {
-        events.push({ kind: "MOVED", distanceMeters: moved, systemName: grid.systemName });
+        flushAwaitingWreck(events);
+        events.push({ kind: "MOVED", distanceMeters: moved, systemName: grid.systemName, ...(anchorNow ? { anchor: true } : {}) });
         previous = null;
         pendingArrivals.clear();
       }
@@ -328,8 +477,10 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
 
     if (!previous) {
       selfID = selfNow;
+      anchorID = anchorNow;
       previous = current;
       events.push(...baseline(grid, current), ...pluginEvents);
+      for (const itemID of capStates.keys()) if (!current.has(itemID)) capStates.delete(itemID);
       return events;
     }
 
@@ -340,47 +491,65 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
     }
     const oldSelfID = selfID;
     selfID = selfNow;
+    anchorID = anchorNow;
 
     const arrived = [...current.values()].filter((entry) => !previous.has(entry.itemID) && !entry.isSelf);
     const departed = [...previous.values()].filter((entry) => !current.has(entry.itemID));
     const wrecks = arrived.filter((entry) => entry.kind === "wreck");
     const usedWrecks = new Set();
     const leaving = [];
+    const canWreck = (entry) => entry.kind === "ship" || entry.kind === "structure";
 
-    for (const gone of departed) {
+    function claimWreck(gone) {
       let wreck = null;
-      if (gone.kind === "ship" || gone.kind === "structure") {
-        let best = Infinity;
-        for (const candidate of wrecks) {
-          if (usedWrecks.has(candidate.itemID)) continue;
-          const d = centreDistance(gone.position, candidate.position);
-          if (d !== null && d <= WRECK_MATCH_METERS && d < best) {
-            best = d;
-            wreck = candidate;
-          }
+      let best = Infinity;
+      for (const candidate of wrecks) {
+        if (usedWrecks.has(candidate.itemID)) continue;
+        const d = centreDistance(gone.position, candidate.position);
+        if (d !== null && d <= WRECK_MATCH_METERS && d < best) {
+          best = d;
+          wreck = candidate;
         }
       }
-      if (wreck) {
-        usedWrecks.add(wreck.itemID);
-        events.push({
-          kind: "DESTROYED",
-          itemID: gone.itemID,
-          label: gone.itemID === oldSelfID ? "self" : gone.label,
-          typeName: gone.typeName,
-          typeID: gone.typeID,
-          corporationID: gone.corporationID,
-          characterID: gone.characterID,
-          self: gone.itemID === oldSelfID,
-          who: gone.itemID === oldSelfID ? "self" : gone.who,
-          wreckID: wreck.itemID,
-          wreckLabel: wreck.label,
-          distanceMeters: gone.distanceMeters,
-          groupKey: gone.groupKey,
-          ext: gone.ext,
-        });
-      } else if (gone.itemID !== oldSelfID) {
-        leaving.push(gone);
-      }
+      if (wreck) usedWrecks.add(wreck.itemID);
+      return wreck;
+    }
+
+    function destroyed(gone, wreck, self) {
+      events.push({
+        kind: "DESTROYED",
+        itemID: gone.itemID,
+        label: self ? "self" : gone.label,
+        typeName: gone.typeName,
+        typeID: gone.typeID,
+        corporationID: gone.corporationID,
+        characterID: gone.characterID,
+        self,
+        who: self ? "self" : gone.who,
+        wreckID: wreck.itemID,
+        wreckLabel: wreck.label,
+        distanceMeters: gone.distanceMeters,
+        groupKey: gone.groupKey,
+        ext: gone.ext,
+      });
+    }
+
+    // Ships that went in an earlier sample: their wreck may have come now.
+    for (const [itemID, waiting] of awaitingWreck) {
+      const back = current.has(itemID);
+      const wreck = back ? null : claimWreck(waiting.entry);
+      if (wreck) destroyed(waiting.entry, wreck, waiting.self);
+      else if (!back && atMs - waiting.atMs < WRECK_WAIT_MS) continue;
+      else if (!waiting.self) leaving.push(waiting.entry);
+      awaitingWreck.delete(itemID);
+    }
+
+    for (const gone of departed) {
+      const self = gone.itemID === oldSelfID;
+      const wreck = canWreck(gone) ? claimWreck(gone) : null;
+      if (wreck) destroyed(gone, wreck, self);
+      else if (canWreck(gone) && gone.mode !== "WARP") awaitingWreck.set(gone.itemID, { entry: gone, self, atMs });
+      else if (!self) leaving.push(gone);
     }
     for (const group of groupByKey(leaving)) {
       const warped = group.every((entry) => entry.mode === "WARP");
@@ -423,6 +592,8 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
 
     for (const entry of current.values()) {
       const before = previous.get(entry.itemID);
+      // A ship new to the grid starts its capacitor record; no event for it.
+      const capacitor = capacitorEvent(entry);
       if (!before) continue;
       if (before.mode !== entry.mode && !settling.has(entry.itemID)) {
         events.push({
@@ -475,6 +646,8 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
       }
       // A settling arrival's locks are printed with its ARRIVE.
       if (!settling.has(entry.itemID)) {
+        events.push(...moduleEvents(before, entry, current));
+        if (capacitor) events.push(capacitor);
         const gained = new Set([...entry.locks].filter((id) => !before.locks.has(id)));
         // A lock lost because its target just died is part of the DESTROYED line.
         const lost = new Set([...before.locks].filter((id) => !entry.locks.has(id) && current.has(id)));
@@ -484,12 +657,14 @@ function createGridDiffer({ gridHooks = [], timed = (_name, fn) => fn() } = {}) 
     }
     events.push(...pluginEvents);
 
+    for (const itemID of capStates.keys()) if (!current.has(itemID)) capStates.delete(itemID);
     previous = current;
     return events;
   }
 
   function selfEntry() {
-    return previous && selfID ? previous.get(selfID) || null : null;
+    const focusID = selfID || anchorID;
+    return previous && focusID ? previous.get(focusID) || null : null;
   }
 
   return {
@@ -657,9 +832,14 @@ function createHookTimer() {
   return { record, report };
 }
 
+// readGridAt(itemID, options) -> grid | null, and explainAnchor(itemID): the
+// sessionless reader (grid.js) and why an entity can't be read. With them a
+// watch may take `at` instead of a characterID.
 function createGridWatch({
   findSession,
   readGrid,
+  readGridAt = null,
+  explainAnchor = null,
   hooks = [],
   killmails = null,
   destinyTee = null,
@@ -692,9 +872,13 @@ function createGridWatch({
     }
   }
 
-  async function runWatch({ characterID, forMs, everyMs, offGridEveryMs, clientMode = "all", divergeMeters = null,
-    positions = false, perfEveryMs = 0 }, sink, closers = []) {
+  // at: an itemID to watch around instead of a character's session. No session
+  // means no client view, and the plugins' hooks get characterID null.
+  async function runWatch({ characterID = null, at = null, forMs, everyMs, offGridEveryMs, clientMode = "all",
+    divergeMeters = null, positions = false, perfEveryMs = 0, modules = true }, sink, closers = []) {
     const startedAtMs = now();
+    if (at) characterID = null;
+    let anchorDetail = null;
     let seq = 0;
     const emit = (event) => {
       const atMs = Number(event.atMs) || now();
@@ -708,6 +892,7 @@ function createGridWatch({
       if (watcher && typeof watcher.step === "function") gridHooks.push({ name: hook.name, step: watcher.step });
     }
     const differ = createGridDiffer({
+      modules,
       gridHooks,
       timed: (name, fn) => {
         const start = perfNow();
@@ -733,6 +918,7 @@ function createGridWatch({
       if (entity && entity.lockedTargets instanceof Map) {
         row.lockedTargetIDs = [...entity.lockedTargets.keys()].map(Number).filter((id) => id > 0);
       }
+      if (modules) row.moduleStates = effectStatesOf(entity, describeType);
       for (let index = 0; index < annotators.length; index += 1) {
         const hook = annotators[index];
         const start = perfNow();
@@ -744,7 +930,7 @@ function createGridWatch({
     let lastOffGridAtMs = -Infinity;
     let lastPositionsAtMs = -Infinity;
     let reason = "time";
-    const client = destinyTee && !destinyTee.off && clientMode !== "off"
+    const client = !at && destinyTee && !destinyTee.off && clientMode !== "off"
       ? createClientWatch({ tee: destinyTee, differ, describeType, clientMode, divergeMeters, emit })
       : null;
 
@@ -762,10 +948,13 @@ function createGridWatch({
       lastPerfAtMs = atMs;
     };
 
-    emit({ kind: "START", characterID, forMs, everyMs, offGridEveryMs, clientMode: client ? clientMode : "off",
-      ...(destinyTee && destinyTee.off && clientMode !== "off" ? { clientOff: destinyTee.off } : {}),
+    emit({ kind: "START", characterID: at ? null : characterID, ...(at ? { at } : {}), forMs, everyMs, offGridEveryMs,
+      clientMode: client ? clientMode : "off",
+      ...(at && clientMode !== "off" ? { clientOff: "watching around an entity: there is no client session" } : {}),
+      ...(!at && destinyTee && destinyTee.off && clientMode !== "off" ? { clientOff: destinyTee.off } : {}),
       ...(client && destinyTee.warpOff ? { warpOff: destinyTee.warpOff } : {}),
       positions: positions === true,
+      modules: modules !== false,
       ...(sampler ? { perf: { everyMs: perfEveryMs, profiler: perf.profiler.enabled, everyTicks: perf.profiler.everyTicks } } : {}) });
     // Stamped when the bridge got them; clientAtMs is when the client recorded them.
     if (clientEvents && typeof clientEvents.subscribe === "function") {
@@ -775,13 +964,18 @@ function createGridWatch({
     }
     for (;;) {
       if (sink.closed()) { reason = "client-closed"; break; }
-      const session = findSession(characterID);
-      if (!session) { reason = "session-gone"; break; }
+      const session = at ? null : findSession(characterID);
+      if (!at && !session) { reason = "session-gone"; break; }
       const sampleStart = perfNow();
       const atMs = now();
       sampleNowMs = atMs;
       annotateMs.fill(0);
-      const grid = readGrid(session, { annotate });
+      const grid = at ? readGridAt(at, { annotate }) : readGrid(session, { annotate });
+      if (!grid) {
+        reason = "anchor-gone";
+        anchorDetail = typeof explainAnchor === "function" ? safe(() => explainAnchor(at)) : null;
+        break;
+      }
       annotators.forEach((hook, index) => timer.record(`${hook.name}.annotate`, annotateMs[index]));
       const gridEvents = differ.step(grid, atMs);
       for (const event of gridEvents) {
@@ -849,6 +1043,7 @@ function createGridWatch({
     emit({
       kind: "END",
       reason,
+      ...(anchorDetail ? { detail: anchorDetail } : {}),
       samples: costs.samples,
       events: seq,
       costs: {

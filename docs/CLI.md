@@ -73,6 +73,10 @@ gridcheck up --world starter      # managed or auto mode; a run does this itself
 gridcheck login
 gridcheck undock
 gridcheck grid                    # what's on grid now; --json shows the field names conditions use
+gridcheck grid --at <itemID>      # the same around any entity, with no character logged in
+gridcheck inspect <itemID>        # one entity's capacitor, running modules, locks and AI state
+gridcheck loadout Tristan --into <officeID>   # a fitted ship left in a corp office, not boarded
+gridcheck world items --location <id>         # read-only: what sits in a hangar, office or ship (--item <id> for one)
 gridcheck slash "/npc 2"          # any GM command, as the character
 gridcheck act lock nearest npc    # player actions: approach, orbit, lock, activate, launchDrones, ...
 gridcheck watch --for 60          # what changed, as timeline lines
@@ -85,6 +89,11 @@ foreground; don't background it and poll its log. `--env NAME=VALUE`, repeatable
 the server's environment, such as a feature switch the tree's config leaves off. A scenario sets the
 same with `"up": { "env": { "NAME": "value" } }`. New characters skip the AIR tutorial, which EveJS
 261018.1's config turns on; `--env EVEJS_NEW_CHARACTER_EXPERIENCE_MODE=tutorial` keeps it.
+
+After changing the server's code, `gridcheck restart` stops it and boots it again with the world
+kept; `--clients` launches the EVE clients you had attached again. Log the headless character in
+again after. `gridcheck slash "<command>" --as client` runs a command as the real client's
+character, and `gridcheck teleport <name>` takes a system name, which stock `/tr` can miss.
 
 Start `gridcheck watch --for 60` in the background before you act, to see the action's effect. `gridcheck
 perf --for 10` measures server ticks; the primer covers performance runs.
@@ -114,13 +123,18 @@ When the bug is in the client itself (its UI, what its ballpark holds, an except
 gridcheck client launch            # logged in and in game; its own account, e2eclient
 gridcheck client ui --text undock  # UI nodes whose text contains it, with path, rect and state
 gridcheck client screenshot        # what it draws, as a PNG; works while covered or minimized
+gridcheck client screenshot --window <window> --fresh   # one window, drawn after this call
 gridcheck client ballpark          # the balls the client holds
 gridcheck client diff              # those against the server's grid; exit 1 when they disagree
-gridcheck client events            # its exceptions; watches and runs carry them as CLIENT_EXCEPTION
+gridcheck client events --since last   # its exceptions since you last asked; noise hidden
+gridcheck client events --frame <file>  # only exceptions from that code, with tracebacks
 gridcheck client console --grep EXCEPTION
-gridcheck client eval "<python>"   # Python 2.7 inside the client
+gridcheck client eval "<python>"   # Python 2.7 inside the client; --vars '<json>' sets names first
+gridcheck client inspect <Class>   # a loaded class: module, default_* attributes, methods
+gridcheck client rpc <svc> <method> --payload '<json>' --shape   # a reply's outline
+gridcheck client rpc-log           # the calls that may have changed state, to put it back
 gridcheck client act warpTo <id>   # a player's action, answered once it's done: undock, dock, warpTo, orbit, lock ...
-gridcheck client click --text undock               # a UI node's own click handler
+gridcheck client click --text undock               # a UI node's own click handler; --window keeps to one window
 gridcheck client type "rifter" --name <edit>       # name the edit; key enter, escape, f1 ... too
 gridcheck client cmd OpenInventory                 # a client command; `client cmd` lists them
 gridcheck client stop              # stop the client when you're done
@@ -130,6 +144,10 @@ Driving runs inside the client, so its window can stay in the background. Severa
 once, each on its own account (`launch --user e2eclient2 --name "Client Second"`; `--user` picks
 one), never a headless pilot's. `gridcheck primer client` has the details. The client opens a
 window on the user's desktop.
+
+On a Living Universe tree, `gridcheck lu-reload [<module>]` reloads a client module the server
+delivers at login in the running client, with no new login; errors name `file.py:line`, `--check`
+only compiles, and `--then "<python>"` runs after install.
 
 A scenario can do all of this as steps (`clientLaunch`, `clientUi`, `clientClick`, `clientAct`,
 `clientEval`, `clientDiff`, `clientScreenshot`), expect on what the client held (`CLIENT_BALLPARK`,

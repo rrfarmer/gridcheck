@@ -29,7 +29,15 @@
 #   uicore.registry GetWindows(), GetModalWindow(), GetFocus(), SetFocus(item)
 #                                        carbonui/services/registry.py
 #   nodes: name, display, state, children, text, caption, GetAbsolute(), IsEnabled(),
-#          HasEventHandler(name), OnClick, OnDblClick, destroyed     carbonui/primitives/base.py
+#          HasEventHandler(name), OnClick, OnDblClick, destroyed, GetMenu, menuObject_weakref
+#                                        carbonui/primitives/base.py (state is read from pickState: UI_DISABLED is
+#                                        pickState off, and a label's own OnClick, carbonui/control/label.py, is why
+#                                        a click on a label's text found the label)
+#   Button.text (its label string), Button.label, Button.disabled     carbonui/control/button.py
+#   ScrollContainer clipCont, IsVerticalScrollBarVisible(), IsHorizontalScrollBarVisible(),
+#          GetPositionVerticalPixels(), ScrollToVerticalPixels(px), GetPositionHorizontalPixels(),
+#          ScrollToHorizontalPixels(px)  carbonui/control/scrollContainer.py (it moves mainCont inside a clipping
+#          clipCont and leaves scrolled-out nodes displayed)
 #   opacity                              carbonui/primitives/container.py, sprite.py
 #   panel IsFullscreen()                 eve/client/script/ui/shared/mapView/dockPanel.py
 #   scene, camera                        eve/client/script/ui/control/scenecontainer.py
@@ -50,7 +58,27 @@
 #          WarpToItem(id, warpRange=), DockOrJumpOrActivateGate(id)
 #                                        eve/client/script/ui/services/menuSvcExtras/movementFunctions.py
 #   undocking ExitDockableLocation()     eve/client/script/ui/shared/dockedUI/undockingSvc.py
-#   menu Dock(itemID)                    eve/client/script/ui/services/menusvc.py
+#   menu Dock(itemID), CelestialMenu(itemID) (raw menu tuples for a space item)
+#                                        eve/client/script/ui/services/menusvc.py
+#   ShowMenu(object, auxObject=None)     carbonui/control/contextMenu/contextMenu.py: what a right click calls
+#                                        (uilib._OnRightMouseUp); it sets object.menuObject_weakref to the ContextMenu
+#   ContextMenu.menuData                 carbonui/control/contextMenu/contextMenu.py
+#   CreateMenuDataFromRawTuples(raw)     carbonui/control/contextMenu/menuDataFactory.py
+#   CloseContextMenus()                  carbonui/control/contextMenu/menuUtil.py
+#   MenuData GetEntries() (None is a separator)    carbonui/control/contextMenu/menuData.py
+#   menu entry data GetText(), IsEnabled(), GetDisabledHint(), HasFunction(), ExecuteFunction(), HasSubMenuData(),
+#          GetSubMenuData() (a MenuData; a dynamic one is built on the call)
+#                                        carbonui/control/contextMenu/menuEntryData.py; MenuEntryView.OnMouseUp runs
+#                                        ExecuteFunction on a tasklet, then closes the menus
+#   message dialogs: dialog_handler._handle_player_fsd_dialog(dialog_key, params, ...), the one function every keyed
+#          message goes through (a server UserError through logmodule's uiMessageFunc, CustomNotify and the rest
+#          through prompt_player_fsd_dialog)    player_messaging/client/dialog_handler.py
+#   QuickMessage.show_message(text, flash_existing)  classmethod; the fading notice (notify, hint and event
+#          messages end there, as do consider and drone errors)    carbonui/control/message.py
+#   Logger.SayMessage(text, msgType, ...)    uilog's mining and bounty notices   eve/client/script/ui/shared/uilog.py
+#   cfg.GetMessage(key, dict, onNotFound=)   carbon/common/script/sys/cfg.py (a builtin in the client)
+#   stackless.getcurrent()               native
+#   eveexceptions.UserError msg, dict    eveexceptions/__init__.py
 #   target TryLockTarget(id), UnlockTarget(id), GetTargets(), GetTargeting()
 #                                        eve/client/script/parklife/targetMgr.py
 #   uicore.layer.shipui isopen           carbonui/control/layer.py
@@ -62,17 +90,22 @@
 #   gameui LogOffCharacter()             eve/client/script/parklife/gameui.py
 #   CharacterSelection.ConfirmWithCharID(charID)
 #                                        eve/client/script/ui/login/charSelection/characterSelection.py
+#   blue.pyos.synchro.Yield()            native: wakes once a frame (LU's docs/CLIENT-UI-DELIVERY.md client classes)
+#   window caption (a property)          carbonui/control/window.py
 #   trinity.device.GetRenderContext().GetDefaultBackBuffer() (width, height, format, isReadable, Resolve),
 #          Tr2RenderTarget, Tr2HostBitmap (format, ChangeFormat, Save), PIXEL_FORMAT
 #                                        native (trinity), as carbonui/services/command.py PrintScreen uses them
 import ast
 import collections
+import inspect
 import json
 import math
 import os
+import re
 import sys
 import time
 import traceback
+import types
 
 import blue
 import uthread
@@ -82,11 +115,14 @@ try:
 except ImportError:
     import builtins
 
-VERSION = 9
+VERSION = 11
 # The build the client names above were checked against. Ops that use them
 # refuse on another build unless the command passes anyBuild; these don't.
 CHECKED_BUILD = 3396210
-BUILD_FREE_OPS = ('ping', 'eval', 'events', 'flush')
+BUILD_FREE_OPS = ('ping', 'eval', 'events', 'flush', 'rpc', 'inspect')
+# Ops whose errors are their caller's alone: a poll loop of them would bury the timeline.
+CALLER_ERROR_OPS = ('eval', 'rpc')
+MESSAGE_LIMIT = 500
 REPR_LIMIT = 20000
 # How long a drive op waits for what it started before answering; past it the
 # action carries on (a dialog it opened may be waiting for an answer).
@@ -126,8 +162,22 @@ SESSION_KEYS = ('userid', 'charid', 'corpid', 'allianceid', 'solarsystemid2', 's
 MODE_NAMES = ('GOTO', 'FOLLOW', 'STOP', 'WARP', 'ORBIT', 'MISSILE', 'MUSHROOM', 'BOID', 'TROLL',
               'MINIBALL', 'FIELD', 'RIGID', 'FORMATION')
 DEFAULT_NOTIFY = ('OnSessionChanged',)
+# The names eval always defines; vars can't replace them.
+EVAL_NAMES = ('sm', 'session', 'uicore', 'agent', 'blue', 'uthread', 'result')
+# Frames a fresh screenshot waits for: one drawn after the call, and the swap chain past it.
+FRESH_FRAMES = 3
+INSPECT_LIMIT = 10
+# Python 2.7's old-style classes are types.ClassType.
+CLASS_TYPES = (type,) + ((types.ClassType,) if hasattr(types, 'ClassType') else ())
 # carbonui.uiconst UI_NORMAL, UI_DISABLED, UI_HIDDEN, UI_PICKCHILDREN.
 STATE_NAMES = {0: 'normal', 1: 'disabled', 2: 'hidden', 3: 'pickChildren'}
+UI_DISABLED = 1
+# How deep node_text looks into a button for its label.
+BUTTON_LABEL_DEPTH = 3
+TAG_PATTERN = re.compile(r'<[^>]*>')
+ENTITY_PATTERN = re.compile(r'&(#[xX][0-9a-fA-F]+|#\d+|[A-Za-z]+);')
+ENTITIES = {'amp': u'&', 'lt': u'<', 'gt': u'>', 'quot': u'"', 'apos': u"'", 'nbsp': u' '}
+SEGMENT_INDEX = re.compile(r'\[\d+\]$')
 # Inventory flags of the fitting racks: LoSlot0 11, MedSlot0 19, HiSlot0 27, eight each.
 RACKS = (('high', 27), ('med', 19), ('low', 11))
 # Categories a ship docks at: Station, Structure.
@@ -260,16 +310,112 @@ class EventLog(object):
         self.listeners = {}
         self.logmodule = None
         self.original = None
+        # (owner, name, what the owner held, what this put there), for stop.
+        self.patches = []
+        self.messages_hooked = False
+        # Tasklets inside a keyed message (dialog_handler): the fading notice it ends in is already recorded.
+        self.keyed = {}
 
     def start(self, notify):
         self.hook_exceptions()
+        self.hook_messages()
         self.select(notify)
 
     def stop(self):
         if self.logmodule is not None and getattr(self.logmodule._LogException, 'gridcheck_original', None) is self.original:
             self.logmodule._LogException = self.original
         self.logmodule = None
+        self.unhook_messages()
         self.select(())
+
+    # Replaces owner.name with wrap(what it held), which takes the same arguments (a method's
+    # first is self, a classmethod's or staticmethod's is not). A wrapper an earlier agent left
+    # is looked through, not wrapped again.
+    def patch(self, owner, name, wrap):
+        saved = owner.__dict__[name]
+        current = getattr(owner, name)
+        stale = getattr(current, 'gridcheck_original', None)
+        if stale is not None:
+            saved = current.gridcheck_saved
+            current = stale
+        wrapper = wrap(current)
+        wrapper.gridcheck_original = current
+        wrapper.gridcheck_saved = saved
+        installed = staticmethod(wrapper) if isinstance(saved, (classmethod, staticmethod)) else wrapper
+        setattr(owner, name, installed)
+        self.patches.append((owner, name, saved, installed))
+
+    # Every message the player is shown, as a 'message' event { key, text, type }: the keyed ones
+    # (a server UserError, CustomNotify, ...) at dialog_handler, the fading notice at
+    # QuickMessage.show_message (also called by itself, with no key), the mining and bounty notices
+    # at Logger.SayMessage. Per-hit combat text (Logger.Say) is left out: it fires on every shot.
+    def hook_messages(self):
+        events = self
+
+        def keyed_dialog(original):
+            def _handle_player_fsd_dialog(dialog_key, params=None, *args, **kwargs):
+                me = id(stackless.getcurrent())
+                events.keyed[me] = events.keyed.get(me, 0) + 1
+                try:
+                    attempt(lambda: events.dialog(dialog_key, params))
+                    return original(dialog_key, params, *args, **kwargs)
+                finally:
+                    events.keyed[me] -= 1
+                    if events.keyed[me] <= 0:
+                        events.keyed.pop(me, None)
+            return _handle_player_fsd_dialog
+
+        def quick(original):
+            def show_message(text, flash_existing=True):
+                if id(stackless.getcurrent()) not in events.keyed:
+                    attempt(lambda: events.message(None, text))
+                return original(text, flash_existing)
+            return show_message
+
+        def say(original):
+            def SayMessage(logger, text, msgType, *args, **kwargs):
+                attempt(lambda: events.message(None, text, msgType))
+                return original(logger, text, msgType, *args, **kwargs)
+            return SayMessage
+
+        try:
+            import stackless
+            from player_messaging.client import dialog_handler
+            from carbonui.control.message import QuickMessage
+            from eve.client.script.ui.shared import uilog
+            self.patch(dialog_handler, '_handle_player_fsd_dialog', keyed_dialog)
+            self.patch(QuickMessage, 'show_message', quick)
+            self.patch(uilog.Logger, 'SayMessage', say)
+            self.messages_hooked = True
+        except Exception as error:
+            self.unhook_messages()
+            print('GRIDCHECK_CLIENT:MESSAGES_NOT_RECORDED %r' % (error,))
+
+    def unhook_messages(self):
+        for owner, name, saved, installed in reversed(self.patches):
+            if owner.__dict__.get(name) is installed:
+                setattr(owner, name, saved)
+        self.patches = []
+        self.messages_hooked = False
+        self.keyed = {}
+
+    def message(self, key, text, kind=None):
+        text = plain_text(text)
+        if not text:
+            return
+        fields = {'key': clip(key) or None, 'text': clip(text, MESSAGE_LIMIT)}
+        if kind is not None:
+            fields['type'] = scalar(kind)
+        self.record('message', fields)
+
+    def dialog(self, key, params):
+        cfg = getattr(builtins, 'cfg', None)
+        if cfg is None or not isinstance(key, TEXT):
+            return
+        # GetMessage rewrites the dict it is given.
+        data = cfg.GetMessage(key, dict(params) if isinstance(params, dict) else params, onNotFound='pass')
+        if data is not None:
+            self.message(key, data.text, data.type)
 
     # LogException hands every exception to the module-level _LogException, so
     # one wrap there sees unhandled tasklet errors too ("EXCEPTION #51").
@@ -388,11 +534,57 @@ class EventLog(object):
         return rows[-limit:] if limit else rows
 
 
-def node_text(node):
+def strip_tags(text):
+    return TAG_PATTERN.sub('', text)
+
+
+def unescape(text):
+    def one(match):
+        body = match.group(1)
+        if body.startswith('#'):
+            code = attempt(lambda: int(body[2:], 16) if body[1:2] in ('x', 'X') else int(body[1:]))
+            return attempt(lambda: unichr(code), None) or attempt(lambda: chr(code), match.group(0)) if code is not None else match.group(0)
+        return ENTITIES.get(body.lower(), match.group(0))
+    return ENTITY_PATTERN.sub(one, text)
+
+
+# What a text search compares: markup and entities gone, any run of whitespace (a no-break space
+# too) one space, lower case. "75%" finds "<color=0xff00ff00>75</color>&nbsp;%" as "75 %".
+def search_text(value):
+    if not isinstance(value, (bytes, UNICODE)):
+        return ''
+    text = re.sub(r'<br\s*/?>', ' ', as_text(value), flags=re.I)
+    return u' '.join(unescape(strip_tags(text)).replace(u'\xa0', u' ').split()).lower()
+
+
+# What a player reads: markup gone, line breaks as spaces.
+def plain_text(text):
+    if not isinstance(text, TEXT):
+        return ''
+    return ' '.join(strip_tags(re.sub(r'<br\s*/?>', ' ', as_text(text), flags=re.I)).split())
+
+
+# An error whose message a Python 2 traceback can print: unicode with non-ASCII characters can't be.
+def refuse(text):
+    if bytes is str and isinstance(text, UNICODE):
+        text = text.encode('utf-8')
+    return ValueError(text)
+
+
+def menu_text(entry):
+    return plain_text(attempt(entry.GetText, ''))
+
+
+def disabled_hint(entry):
+    hint = plain_text(attempt(entry.GetDisabledHint))
+    return ' (%s)' % hint if hint else ''
+
+
+def own_text(node):
     for attr in ('text', 'caption'):
         value = attempt(lambda: getattr(node, attr, None))
         if isinstance(value, TEXT) and value:
-            return clip(value)
+            return value
     return None
 
 
@@ -401,6 +593,87 @@ def node_children(node):
     if children is None:
         return []
     return attempt(lambda: list(children), [])
+
+
+def button_like(node):
+    return attempt(lambda: any('Button' in cls.__name__ for cls in type(node).__mro__), False)
+
+
+# The first label under a node, looking BUTTON_LABEL_DEPTH levels down through displayed children.
+def descendant_text(node):
+    level = [node]
+    for _depth in range(BUTTON_LABEL_DEPTH):
+        below = []
+        for parent in level:
+            for kid in node_children(parent):
+                if not attempt(lambda: kid.display, False):
+                    continue
+                value = own_text(kid)
+                if value:
+                    return value
+                below.append(kid)
+        level = below[:50]
+    return None
+
+
+# A node's own text or caption. A button without one answers its label (a Button's text is its
+# label string; another button class keeps it in a label node), so a search for what the player
+# reads finds the button.
+def full_text(node):
+    value = own_text(node)
+    if value is None and button_like(node):
+        label = attempt(lambda: getattr(node, 'label', None))
+        value = label if isinstance(label, TEXT) and label else descendant_text(node)
+    return value or None
+
+
+def node_text(node):
+    value = full_text(node)
+    return clip(value) if value else None
+
+
+# The whole text, not the clipped one a listing shows. The markup counts as part of the text, and
+# does not: "<b>Issue" matches as written, and "75 %" matches "75%" (spaces aside).
+def text_matches(wanted, text):
+    if not wanted:
+        return True
+    if not text:
+        return False
+    if lower(wanted) in (lower(text) or ''):
+        return True
+    want, have = search_text(wanted), search_text(text)
+    return bool(want) and (want in have or want.replace(u' ', u'') in have.replace(u' ', u''))
+
+
+# Siblings that share a label get a [n] suffix (n from 0, counting hidden siblings), so a path names one node.
+def sibling_segments(kids):
+    labels = [node_label(kid) for kid in kids]
+    counts = collections.Counter(labels)
+    seen = {}
+    segments = []
+    for label in labels:
+        if counts[label] > 1:
+            number = seen.get(label, 0)
+            seen[label] = number + 1
+            segments.append('%s[%d]' % (label, number))
+        else:
+            segments.append(label)
+    return segments
+
+
+# A path as ui prints it, or one whose segments leave out the [n] they could have: that matches
+# every sibling with the label, so it names one node only where there is one.
+def path_matches(wanted, here):
+    if wanted == here:
+        return True
+    left = wanted.split('/')
+    right = here.split('/')
+    if len(left) != len(right):
+        return False
+    for want, have in zip(left, right):
+        if want != have and want != SEGMENT_INDEX.sub('', have):
+            return False
+    return True
 
 
 def node_info(node):
@@ -475,19 +748,21 @@ def node_label(node):
     return clip(attempt(lambda: node.name)) or type(node).__name__
 
 
-def walk_nodes(root, hidden):
+def walk_nodes(root, hidden, here=None, chain=()):
     """Every node under root, depth first, as (node, path, ancestors); the paths
-    are the ones op ui prints. Hidden subtrees are skipped unless hidden."""
-    stack = [(root, '/' + node_label(root), ())]
+    are the ones op ui prints. Hidden subtrees are skipped unless hidden. A root
+    below the desktop takes its own path and ancestors (Agent.path_of)."""
+    stack = [(root, here or '/' + node_label(root), tuple(chain))]
     visited = 0
     while stack and visited < UI_MAX_VISITED:
         node, here, chain = stack.pop()
         visited += 1
         yield node, here, chain
         kids = node_children(node)
-        for kid in reversed(kids):
+        segments = sibling_segments(kids)
+        for kid, segment in reversed(list(zip(kids, segments))):
             if hidden or attempt(lambda: kid.display, False):
-                stack.append((kid, '%s/%s' % (here, node_label(kid)), chain + (node,)))
+                stack.append((kid, '%s/%s' % (here, segment), chain + (node,)))
 
 
 def has_handler(node, name):
@@ -497,13 +772,25 @@ def has_handler(node, name):
     return bool(found)
 
 
+def takes_mouse(node):
+    """False for a node a click passes through to what is behind it (UI_DISABLED, such as a label)."""
+    return attempt(lambda: node.state) != UI_DISABLED
+
+
 def clickable(node, here, chain, name):
-    """The node, or its nearest ancestor, that handles name, with its path."""
+    """The node, or its nearest ancestor, that handles name and takes mouse input, with its path
+    and the paths of the nodes it passed over because a click goes through them. A real target that
+    is disabled (a Button) is still returned: the caller says so."""
     parts = here.split('/')
+    passed = []
     for depth, candidate in enumerate(reversed(chain + (node,))):
-        if has_handler(candidate, name):
-            return candidate, '/'.join(parts[:len(parts) - depth])
-    return None, None
+        if not has_handler(candidate, name):
+            continue
+        path = '/'.join(parts[:len(parts) - depth])
+        if takes_mouse(candidate):
+            return candidate, path, passed
+        passed.append(path)
+    return None, None, passed
 
 
 def call_handler(node, name, *args):
@@ -537,6 +824,25 @@ def char_for(vk):
     if 0x41 <= vk <= 0x5A:
         return vk + 32
     return None
+
+
+# "Name(self, a, b=1, *args, **kwargs)" for a class's function, staticmethod or classmethod.
+def signature(name, item):
+    function = getattr(item, '__func__', item)
+    reader = getattr(inspect, 'getfullargspec', None) or inspect.getargspec
+    spec = attempt(lambda: reader(function))
+    if spec is None:
+        return name
+    args = list(spec.args)
+    defaults = list(spec.defaults or ())
+    plain = len(args) - len(defaults)
+    parts = args[:plain] + ['%s=%s' % (arg, clip(attempt(lambda: repr(value), '?'), 40)) for arg, value in zip(args[plain:], defaults)]
+    if spec.varargs:
+        parts.append('*' + spec.varargs)
+    keywords = getattr(spec, 'keywords', None) or getattr(spec, 'varkw', None)
+    if keywords:
+        parts.append('**' + keywords)
+    return '%s(%s)' % (name, ', '.join(parts))
 
 
 def type_name(typeID):
@@ -630,8 +936,8 @@ class Agent(object):
         except Exception:
             error = traceback.format_exc()
             reply = {'ok': False, 'error': error}
-            # An eval's own mistakes are its caller's alone; a poll loop of them would bury the timeline.
-            if op != 'eval':
+            # An eval's own mistakes (and a refused rpc) are its caller's alone; a poll loop of them would bury the timeline.
+            if op not in CALLER_ERROR_OPS:
                 attempt(lambda: self.events.record('agent-error', {'op': clip(op), 'error': clip(error.strip().splitlines()[-1])}))
         reply['id'] = command_id
         try:
@@ -651,23 +957,57 @@ class Agent(object):
 
     def op_ping(self, args):
         value = self.identity()
+        desktop = getattr(self.current_uicore(), 'desktop', None)
         value.update({
             'wallclock': scalar(blue.os.GetWallclockTime()),
+            'ui': [whole(attempt(lambda: desktop.width)), whole(attempt(lambda: desktop.height))] if desktop is not None else None,
             'session': session_snapshot(getattr(builtins, 'session', None)),
             'where': attempt(self.where),
             'events': {'seq': self.events.seq, 'notify': sorted(self.events.listeners),
-                       'exceptions': self.events.logmodule is not None},
+                       'exceptions': self.events.logmodule is not None, 'messages': self.events.messages_hooked},
         })
         return value
 
     # args: {"code": "..."}. An expression answers its value; statements that
     # end in an expression answer that, as a REPL does; other statements answer
     # whatever they leave in `result`. Names persist between calls; sm, session,
-    # uicore, agent, blue and uthread are always current.
+    # uicore, agent, blue and uthread are always current. truth adds bool(value) as
+    # `truth`, in Python's own sense (an empty list is false); soft answers an error
+    # the code raises as { error, truth: false } rather than failing (a syntax error
+    # still fails: no later try can pass), for a caller that polls.
     def op_eval(self, args):
         code = args.get('code') or ''
         if not isinstance(code, TEXT):
             raise ValueError('eval code must be text')
+        given = args.get('vars')
+        if given is not None:
+            if not isinstance(given, dict):
+                raise ValueError('vars: an object of names and the values to give them')
+            for key in given:
+                if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key) or key in EVAL_NAMES:
+                    raise refuse('vars: %s is not a name eval can be given (a Python identifier, not %s)' % (key, ', '.join(EVAL_NAMES)))
+            self.namespace.update((str(key), value) for key, value in given.items())
+        try:
+            value = self.eval_value(code)
+        except SyntaxError:
+            raise
+        except Exception:
+            if not (args.get('truth') and args.get('soft')):
+                raise
+            return {'repr': None, 'truncated': False, 'json': None, 'truth': False,
+                    'error': traceback.format_exc().strip().splitlines()[-1]}
+        text = repr(value)
+        safe = json_safe(value)
+        reply = {
+            'repr': text[:REPR_LIMIT],
+            'truncated': len(text) > REPR_LIMIT,
+            'json': safe if jsonable(safe) else None,
+        }
+        if args.get('truth'):
+            reply['truth'] = bool(value)
+        return reply
+
+    def eval_value(self, code):
         # Compiled as unicode, so u"..." literals keep their characters on 2.7;
         # its UTF-8 bytes would be read as Latin-1.
         namespace = self.namespace
@@ -696,13 +1036,54 @@ class Agent(object):
                 value = eval(compile(ast.fix_missing_locations(ast.Expression(last.value)), '<gridcheck-eval>', 'eval'), namespace)
             else:
                 value = namespace.get('result')
-        text = repr(value)
-        safe = json_safe(value)
-        return {
-            'repr': text[:REPR_LIMIT],
-            'truncated': len(text) > REPR_LIMIT,
-            'json': safe if jsonable(safe) else None,
-        }
+        return value
+
+    # args: {"service", "method", "payload" | "args"}. sm.RemoteSvc(service).method(...)
+    # as the client's character. payload is passed as the one JSON-encoded string the
+    # Living Universe commands take, and a reply that is a JSON string is decoded; args
+    # are passed as they are. A server UserError fails with its message. Answers like eval.
+    def op_rpc(self, args):
+        names = []
+        for key in ('service', 'method'):
+            value = args.get(key)
+            if not isinstance(value, TEXT) or not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', value):
+                raise ValueError('%s: a name of letters, digits and _' % key)
+            names.append(str(value))
+        service, method = names
+        payload = args.get('payload')
+        call_args = args.get('args')
+        if payload is not None and call_args is not None:
+            raise ValueError('pass payload or args, not both')
+        if call_args is not None and not isinstance(call_args, list):
+            raise ValueError('args: a list')
+        if payload is not None:
+            call_args = [json.dumps(payload)]
+        remote = self.sm.RemoteSvc(service)
+        function = getattr(remote, method, None)
+        if not callable(function):
+            raise ValueError('the %s service has no method %s' % (service, method))
+        try:
+            reply = function(*(call_args or []))
+        except Exception as error:
+            raise refuse(self.refusal(service, method, error))
+        if payload is not None and isinstance(reply, TEXT):
+            try:
+                reply = json.loads(reply)
+            except ValueError:
+                pass
+        text = repr(reply)
+        safe = json_safe(reply)
+        return {'repr': text[:REPR_LIMIT], 'truncated': len(text) > REPR_LIMIT, 'json': safe if jsonable(safe) else None}
+
+    # A UserError as the player would read it, else the exception's own line.
+    def refusal(self, service, method, error):
+        key = getattr(error, 'msg', None)
+        if not (isinstance(key, TEXT) and type(error).__name__.endswith('UserError')):
+            return '%s.%s raised %s' % (service, method, traceback.format_exception_only(type(error), error)[-1].strip())
+        cfg = getattr(builtins, 'cfg', None)
+        data = attempt(lambda: cfg.GetMessage(key, dict(getattr(error, 'dict', None) or {}), onNotFound='pass'))
+        text = plain_text(getattr(data, 'text', None))
+        return '%s.%s was refused (UserError %s)%s' % (service, method, key, ': ' + text if text else '')
 
     # args: {"limit"}. Every node under the desktop, hidden ones too, flat, with
     # what check-ui asserts: shown and enabled counting its ancestors, opacity,
@@ -761,15 +1142,16 @@ class Agent(object):
             'sampleMs': max(0, int((time.time() - started) * 1000)),
         }
 
-    # args: {"depth", "cls", "name", "text", "hidden", "limit"}. Without a filter,
-    # the tree from uicore.desktop to depth (default 3). With one, every node at
+    # args: {"depth", "cls", "name", "text", "hidden", "limit", "window"}. Without a filter,
+    # the tree from uicore.desktop (or the window) to depth (default 3). With one, every node at
     # any depth whose class, name or text contains it (case-insensitive), each
     # with its path. Hidden subtrees are skipped unless hidden is true.
     def op_ui(self, args):
-        uicore = self.current_uicore()
-        desktop = getattr(uicore, 'desktop', None)
-        if desktop is None:
-            raise ValueError('uicore.desktop is not ready')
+        uicore, desktop = self.desktop()
+        root, root_path = desktop, '/' + node_label(desktop)
+        if args.get('window'):
+            root = self.window_scope(args.get('window'))
+            root_path = self.path_of(root)[0]
         filters = dict((key, lower(args.get(key))) for key in ('cls', 'name', 'text'))
         finding = any(filters.values())
         depth = bounded(args.get('depth'), 40 if finding else 3, 0, 60)
@@ -778,20 +1160,19 @@ class Agent(object):
         counts = {'visited': 0, 'listed': 0, 'truncated': False}
         matches = []
 
-        def matched(info):
-            for key, attr in (('cls', 'cls'), ('name', 'name'), ('text', 'text')):
+        def matched(node, info):
+            for key in ('cls', 'name'):
                 wanted = filters[key]
-                if wanted and wanted not in (lower(info.get(attr)) or ''):
+                if wanted and wanted not in (lower(info.get(key)) or ''):
                     return False
-            return True
+            return text_matches(filters['text'], full_text(node))
 
-        def walk(node, level, path):
+        def walk(node, level, here):
             counts['visited'] += 1
             info = node_info(node)
             kids = node_children(node)
             info['children'] = len(kids)
-            here = '%s/%s' % (path, info['name'] or info['cls'])
-            if finding and matched(info):
+            if finding and matched(node, info):
                 info['path'] = here
                 matches.append(info)
                 if len(matches) >= limit:
@@ -801,7 +1182,7 @@ class Agent(object):
             if level >= depth or counts['truncated']:
                 return info
             shown = []
-            for kid in kids:
+            for kid, segment in zip(kids, sibling_segments(kids)):
                 if counts['truncated'] or counts['visited'] >= UI_MAX_VISITED:
                     counts['truncated'] = True
                     break
@@ -810,18 +1191,18 @@ class Agent(object):
                 if not finding and counts['listed'] >= limit:
                     counts['truncated'] = True
                     break
-                child = walk(kid, level + 1, here)
+                child = walk(kid, level + 1, '%s/%s' % (here, segment))
                 if not finding:
                     shown.append(child)
             if not finding:
                 info['kids'] = shown
             return info
 
-        tree = walk(desktop, 0, '')
+        tree = walk(root, 0, root_path)
         registry = getattr(uicore, 'registry', None)
         windows = attempt(registry.GetWindows, []) if registry is not None else []
         value = {
-            'windows': [window_info(window) for window in windows or []],
+            'windows': [window_info(window) for window in windows or [] if root is desktop or window is root],
             'visited': counts['visited'],
             'truncated': counts['truncated'],
         }
@@ -889,7 +1270,114 @@ class Agent(object):
             bitmap.ChangeFormat(trinity.PIXEL_FORMAT.B8G8R8X8_UNORM)
         if not bitmap.Save(target):
             raise RuntimeError('the client could not save %s' % target)
-        return {'file': target, 'width': back.width, 'height': back.height, 'ms': int((time.time() - started) * 1000)}
+        # Pointer coordinates are UI units (the desktop's size), not back buffer pixels.
+        desktop = getattr(self.current_uicore(), 'desktop', None)
+        return {'file': target, 'width': back.width, 'height': back.height, 'ms': int((time.time() - started) * 1000),
+                'uiWidth': whole(attempt(lambda: desktop.width)), 'uiHeight': whole(attempt(lambda: desktop.height))}
+
+    # args: {"fresh", "window", "path", "hidden"}. Before a screenshot: fresh waits until the
+    # client has drawn FRESH_FRAMES frames after this call, so the picture shows what the calls
+    # before it changed; window or path answers that node's rect in UI units, cut to the desktop,
+    # for the picture to be cropped to.
+    def op_area(self, args):
+        _uicore, desktop = self.desktop()
+        if args.get('fresh'):
+            for _frame in range(FRESH_FRAMES):
+                blue.pyos.synchro.Yield()
+        width, height = whole(attempt(lambda: desktop.width)), whole(attempt(lambda: desktop.height))
+        value = {'ui': [width, height], 'rect': None}
+        if args.get('window') or args.get('path'):
+            if args.get('window') and args.get('path'):
+                raise refuse('crop to a window or a path, not both')
+            if args.get('window'):
+                node = self.window_scope(args.get('window'))
+                where = node_label(node)
+            else:
+                node, where, _chain = self.locate({'path': args.get('path'), 'hidden': args.get('hidden')})
+            rect = attempt(lambda: node.GetAbsolute())
+            if not rect or not attempt(lambda: node.display, False):
+                raise refuse('%s is not displayed, so it has no area to crop to' % where)
+            left, top = max(0, whole(rect[0])), max(0, whole(rect[1]))
+            right, bottom = min(width or 0, whole(rect[0] + rect[2])), min(height or 0, whole(rect[1] + rect[3]))
+            if right <= left or bottom <= top:
+                raise refuse('%s lies outside the desktop (%s)' % (where, [whole(v) for v in rect]))
+            value['rect'] = [left, top, right - left, bottom - top]
+        return value
+
+    # args: {"cls": a class name, "module": part of a module's name, "inherited": bool}. The
+    # classes of that name in the client's loaded modules (sys.modules), exact name first, else
+    # case-insensitive: where each is defined and importable from, its base classes, its default_*
+    # attributes (carbonui's construction defaults) with their values, and its own methods with
+    # their arguments; inherited lists the inherited ones by class too. A module the client hasn't
+    # loaded yet isn't searched.
+    def op_inspect(self, args):
+        wanted = args.get('cls')
+        if not isinstance(wanted, TEXT) or not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', wanted):
+            raise refuse('cls: a class name, e.g. Slider')
+        wanted = str(wanted)
+        within = lower(args.get('module'))
+        exact = collections.OrderedDict()
+        loose = collections.OrderedDict()
+        scanned = 0
+        for name, mod in list(sys.modules.items()):
+            if mod is None or (within and within not in name.lower()):
+                continue
+            space = attempt(lambda: vars(mod))
+            if not isinstance(space, dict):
+                continue
+            scanned += 1
+            if scanned % 500 == 0:
+                blue.pyos.synchro.SleepWallclock(1)
+            found = space.get(wanted)
+            if isinstance(found, CLASS_TYPES):
+                exact.setdefault(id(found), [found, []])[1].append(name)
+            elif not exact:
+                for key, value in list(space.items()):
+                    if isinstance(value, CLASS_TYPES) and isinstance(key, str) and key.lower() == wanted.lower():
+                        loose.setdefault(id(value), [value, []])[1].append(name)
+        rows = list((exact or loose).values())
+        return {'cls': wanted, 'scanned': scanned, 'count': len(rows),
+                'matches': [self.class_info(klass, modules, bool(args.get('inherited'))) for klass, modules in rows[:INSPECT_LIMIT]]}
+
+    def class_info(self, klass, modules, inherited):
+        mro = attempt(lambda: list(inspect.getmro(klass)), [klass])
+
+        def owner(name):
+            for base in mro:
+                if name in attempt(lambda: vars(base), {}):
+                    return base
+            return None
+
+        def label(base):
+            return '%s.%s' % (getattr(base, '__module__', '?'), base.__name__)
+
+        defaults = []
+        for name in sorted(attempt(lambda: dir(klass), [])):
+            if name.startswith('default_'):
+                base = owner(name)
+                defaults.append({'name': name, 'value': clip(attempt(lambda: repr(getattr(klass, name)), '?'), 160),
+                                 'from': base.__name__ if base is not None else None})
+        own = attempt(lambda: vars(klass), {})
+        methods = []
+        properties = []
+        for name in sorted(own):
+            item = own[name]
+            if isinstance(item, property):
+                properties.append(name)
+            elif callable(item) or isinstance(item, (classmethod, staticmethod)):
+                if not name.startswith('__') or name == '__init__':
+                    methods.append(signature(name, item))
+        others = collections.OrderedDict()
+        for base in mro[1:]:
+            names = sorted(name for name, item in attempt(lambda: vars(base), {}).items()
+                           if (callable(item) or isinstance(item, (classmethod, staticmethod))) and not name.startswith('__')
+                           and name not in own and owner(name) is base)
+            if names:
+                others[label(base)] = names if inherited else len(names)
+        defining = getattr(klass, '__module__', None)
+        return {'name': klass.__name__, 'module': defining, 'importable': sorted(set(modules))[:12],
+                'bases': [label(base) for base in mro[1:]], 'defaults': defaults, 'methods': methods,
+                'properties': properties, 'inherited': others}
 
     # args: {"since": seq, "limit", "notify": [names]}. The agent's own ring;
     # notify replaces which notify events it records.
@@ -918,6 +1406,7 @@ class Agent(object):
     # answer; then finished is false and modal names the dialog.
     def settle(self, start, args, what, limit=None, record=True):
         box = {}
+        seq = self.events.seq
 
         def work():
             try:
@@ -943,10 +1432,14 @@ class Agent(object):
         safe = json_safe(value)
         uicore = self.current_uicore()
         modal = attempt(lambda: uicore.registry.GetModalWindow())
+        # What the player was told meanwhile (a refusal fades from the screen within seconds).
+        messages = [{'key': event.get('key'), 'text': event.get('text')}
+                    for event in self.events.since(seq, 20) if event['kind'] == 'message']
         return {
             'finished': bool(box.get('done')),
             'result': safe if jsonable(safe) else clip(value),
             'modal': window_info(modal) if modal is not None else None,
+            'messages': messages,
         }
 
     def desktop(self):
@@ -956,27 +1449,88 @@ class Agent(object):
             raise ValueError('uicore.desktop is not ready')
         return uicore, desktop
 
-    # The one displayed node args name: path (exact, as ui prints it), or cls,
-    # name and text (contains, case-insensitive), with index to pick among several.
-    def locate(self, args):
+    # The open window wanted names: its windowID, name, class or caption, exact first, else
+    # contains (case-insensitive). None or several is an error listing the open windows.
+    def window_scope(self, wanted):
+        uicore = self.current_uicore()
+        registry = getattr(uicore, 'registry', None)
+        windows = [window for window in (attempt(lambda: registry.GetWindows(), []) or [])
+                   if not attempt(lambda: window.destroyed, False)]
+        key = lower(as_text(wanted) if isinstance(wanted, (bytes, UNICODE)) else str(wanted))
+        if not key:
+            raise refuse('window: a window\'s ID, name, class or caption')
+
+        def labels(window):
+            values = [attempt(lambda: getattr(window, 'windowID', None)), attempt(lambda: window.name), type(window).__name__,
+                      full_text(window)]
+            return [lower(value if isinstance(value, (bytes, UNICODE)) else str(value)) for value in values if value is not None]
+        rows = [(window, labels(window)) for window in windows]
+        found = [window for window, names in rows if key in names] or [window for window, names in rows if any(key in name for name in names)]
+        if len(found) == 1:
+            return found[0]
+        listed = ', '.join('%s (%s)' % (attempt(lambda: window.windowID) or node_label(window), type(window).__name__)
+                           for window in (found or windows)[:20])
+        raise refuse('%s window "%s"; %s' % ('no' if not found else '%d windows match' % len(found), wanted,
+                                             'the open windows are: %s' % (listed or '(none)') if not found else listed))
+
+    # A node's path and ancestors, as walk_nodes from the desktop gives them.
+    def path_of(self, target):
+        _uicore, desktop = self.desktop()
+        for node, here, chain in walk_nodes(desktop, True):
+            if node is target:
+                return here, chain
+        raise ValueError('%s is not under the desktop' % node_label(target))
+
+    # The one displayed node args name: path (as ui prints it; a segment without
+    # its [n] matches each sibling with that label), cls, name and text (contains,
+    # case-insensitive), all of them together, with index to pick among what is left.
+    # window keeps to one window's nodes. With text, path, cls and name may name the
+    # node a click on the text goes to instead (the label's own button). handler (a
+    # click's OnClick or OnDblClick) prefers the matches that take that click, and of
+    # matches a click sends to the same node, keeps one.
+    def locate(self, args, handler=None):
         uicore, desktop = self.desktop()
         path = args.get('path')
         filters = dict((key, lower(args.get(key))) for key in ('cls', 'name', 'text'))
         if not path and not any(filters.values()):
             raise ValueError('name the node: path (from ui), or cls, name or text')
+        root, here, chain = desktop, None, ()
+        if args.get('window'):
+            root = self.window_scope(args.get('window'))
+            here, chain = self.path_of(root)
+
+        def selects(node, where):
+            if path and not path_matches(path, where):
+                return False
+            for key in ('cls', 'name'):
+                have = type(node).__name__ if key == 'cls' else attempt(lambda: node.name)
+                if filters[key] and filters[key] not in (lower(have) or ''):
+                    return False
+            return True
+
         found = []
-        for node, here, chain in walk_nodes(desktop, bool(args.get('hidden'))):
-            if path:
-                if here != path:
+        for node, where, above in walk_nodes(root, bool(args.get('hidden')), here, chain):
+            if not text_matches(filters['text'], full_text(node) if filters['text'] else None):
+                continue
+            if not selects(node, where):
+                if not filters['text']:
                     continue
-            else:
-                info = {'cls': type(node).__name__, 'name': attempt(lambda: node.name), 'text': node_text(node)}
-                if any(wanted and wanted not in (lower(info[key]) or '') for key, wanted in filters.items()):
+                target, target_path, _passed = clickable(node, where, above, 'OnClick')
+                if target is None or not selects(target, target_path):
                     continue
-            found.append((node, here, chain))
+            found.append((node, where, above))
         # A button and its own label both match its text; the outermost stands for both.
         matched = set(id(node) for node, _here, _chain in found)
-        found = [row for row in found if not any(id(above) in matched for above in row[2])]
+        found = [row for row in found if not any(id(up) in matched for up in row[2])]
+        if handler is not None:
+            takers = []
+            targets = set()
+            for row in found:
+                target = clickable(row[0], row[1], row[2], handler)[0]
+                if target is not None and id(target) not in targets:
+                    targets.add(id(target))
+                    takers.append(row)
+            found = takers or found
         index = args.get('index')
         if index is not None:
             index = bounded(index, -1, 0, 100000)
@@ -987,7 +1541,7 @@ class Agent(object):
             return found[0]
         if not found:
             raise ValueError('no displayed node matches %s; ui --hidden also lists hidden ones' % (
-                json.dumps(dict((k, v) for k, v in dict(filters, path=path).items() if v)),))
+                json.dumps(dict((k, v) for k, v in dict(filters, path=path, window=args.get('window')).items() if v)),))
         listed = '\n'.join('  [%d] %s' % (n, here) for n, (_node, here, _chain) in enumerate(found[:12]))
         raise ValueError('%d nodes match; pass index or path:\n%s%s' % (len(found), listed, '\n  ...' if len(found) > 12 else ''))
 
@@ -1068,31 +1622,172 @@ class Agent(object):
                 attempt(uilib.UpdateMouseOver)
                 self.pointer_busy = False
 
-    # The node, and the nearest node from it up that takes a click.
-    def op_find(self, args):
-        node, here, chain = self.locate(args)
-        clicked, clicked_path = clickable(node, here, chain, 'OnClick')
-        return {'node': self.described(node, here),
-                'target': self.described(clicked, clicked_path) if clicked is not None else None}
+    # The scroll containers a node sits in, innermost first.
+    def scroll_containers(self, chain):
+        return [above for above in reversed(chain)
+                if callable(getattr(above, 'ScrollToVerticalPixels', None)) and getattr(above, 'clipCont', None) is not None]
 
-    # args: the node (as locate), double. Calls the click handler of the node or
-    # its nearest ancestor that has one: Button.press() for a button, which
-    # checks it is enabled, else OnClick (OnDblClick with double).
+    # How far, in UI units, a scroll container has to move for the node to be seen: (across, down).
+    # A node that fits is brought just inside the edge it is past; a taller one is left once any
+    # of it shows.
+    def scroll_offsets(self, node, container):
+        left, top, width, height = attempt(lambda: node.GetAbsolute()) or (0, 0, 0, 0)
+        c_left, c_top, c_width, c_height = attempt(lambda: container.clipCont.GetAbsolute()) or (0, 0, 0, 0)
+        if not (width or height) or not (c_width and c_height):
+            return 0, 0
+
+        def distance(start, size, c_start, c_size):
+            end, c_end = start + size, c_start + c_size
+            if size <= c_size:
+                return start - c_start if start < c_start else end - c_end if end > c_end else 0
+            return start - c_start if end <= c_start or start >= c_end else 0
+
+        across = distance(left, width, c_left, c_width) if attempt(container.IsHorizontalScrollBarVisible) else 0
+        down = distance(top, height, c_top, c_height) if attempt(container.IsVerticalScrollBarVisible) else 0
+        return across, down
+
+    # Whether the node is outside what its scroll containers show.
+    def scrolled_out(self, node, chain):
+        return any(any(self.scroll_offsets(node, container)) for container in self.scroll_containers(chain))
+
+    # Scrolls each container the node sits in, with the client's own call, until the node shows in
+    # it. Answers whether anything moved; raises if the node still isn't in view.
+    def scroll_into_view(self, node, chain, path):
+        moved = False
+        for container in self.scroll_containers(chain):
+            across, down = self.scroll_offsets(node, container)
+            if down:
+                container.ScrollToVerticalPixels(container.GetPositionVerticalPixels() + down)
+            if across:
+                container.ScrollToHorizontalPixels(container.GetPositionHorizontalPixels() + across)
+            if across or down:
+                moved = True
+                if any(self.scroll_offsets(node, container)):
+                    raise ValueError('%s is outside the visible part of its scroll container and scrolling did not bring it in' % path)
+        return moved
+
+    # The node, and the nearest node from it up that takes a click; whether a scroll container
+    # holds the node out of view (click scrolls it in first).
+    def op_find(self, args):
+        node, here, chain = self.locate(args, 'OnClick')
+        clicked, clicked_path, passed = clickable(node, here, chain, 'OnClick')
+        found = self.described(node, here)
+        found['scrolledOut'] = self.scrolled_out(node, chain)
+        return {'node': found,
+                'target': self.described(clicked, clicked_path) if clicked is not None else None,
+                'passedOver': passed}
+
+    # args: the node (as locate), double. Scrolls the node into view, then calls the click handler
+    # of the node or its nearest ancestor that has one and takes mouse input (a label doesn't:
+    # the click goes through it): Button.press() for a button, which checks it is enabled, else
+    # OnClick (OnDblClick with double).
     def op_click(self, args):
-        node, here, chain = self.locate(args)
         handler = 'OnDblClick' if args.get('double') else 'OnClick'
-        target, target_path = clickable(node, here, chain, handler)
+        node, here, chain = self.locate(args, handler)
+        target, target_path, passed = clickable(node, here, chain, handler)
         if target is None:
-            raise ValueError('neither %s nor a node above it has %s' % (here, handler))
+            raise refuse('neither %s nor a node above it has %s%s' % (
+                here, handler, ' that takes mouse input (passed over, as a click goes through them: %s)' % ', '.join(passed) if passed else ''))
         if attempt(lambda: target.IsEnabled()) is False or getattr(target, 'enabled', True) is False:
             raise ValueError('%s is disabled' % target_path)
+        scrolled = self.scroll_into_view(node, chain, here)
         press = getattr(target, 'press', None)
         if handler == 'OnClick' and callable(press):
             value = self.settle(press, args, 'click %s' % target_path)
         else:
             value = self.settle(lambda: call_handler(target, handler), args, 'click %s' % target_path)
         value['clicked'] = self.described(target, target_path)
+        value['scrolled'] = scrolled
         return value
+
+    # args: the node (as locate) or itemID, entries: [label, ...], wait. Opens the context menu
+    # as a right click does (ShowMenu on the node, or on the nearest node above it with a GetMenu;
+    # or, for a space item, the menu service's CelestialMenu), then takes each entry by its label
+    # (exact, else contains, case-insensitive), going down a submenu for each but the last, and
+    # runs the last as a click on it would. A label that isn't there lists the ones that are.
+    def op_menu(self, args):
+        wanted = args.get('entries')
+        if not isinstance(wanted, list) or not wanted or not all(isinstance(each, TEXT) and each.strip() for each in wanted):
+            raise refuse('entries: the labels to pick, outermost first, e.g. ["Expel Member", "Confirm Expel Member"]')
+        from carbonui.control.contextMenu.menuUtil import CloseContextMenus
+        if args.get('itemID') is not None:
+            item = args.get('itemID')
+            if isinstance(item, bool) or not (isinstance(item, INTS) or (isinstance(item, TEXT) and item.isdigit())):
+                raise refuse('itemID: a number')
+            source = 'item %s' % (item,)
+            data = self.item_menu(int(item))
+        else:
+            node, here, chain = self.locate(args)
+            holder = None
+            parts = here.split('/')
+            for depth, above in enumerate(reversed(chain + (node,))):
+                if getattr(above, 'GetMenu', None):
+                    holder, source = above, '/'.join(parts[:len(parts) - depth])
+                    break
+            if holder is None:
+                raise refuse('neither %s nor a node above it has a context menu (GetMenu)' % here)
+            CloseContextMenus()
+            data = self.node_menu(holder)
+        try:
+            picked = []
+            run = None
+            for index, label in enumerate(wanted):
+                last = index == len(wanted) - 1
+                entry = self.pick_entry(data, label, picked)
+                picked.append(menu_text(entry))
+                if not last:
+                    if not entry.HasSubMenuData():
+                        raise refuse('%s has no submenu; it runs something, so it is the last entry' % ' > '.join(picked))
+                    if not entry.IsEnabled():
+                        raise refuse('%s is disabled%s' % (' > '.join(picked), disabled_hint(entry)))
+                    data = entry.GetSubMenuData()
+                    if not data or not data.GetEntries():
+                        raise refuse('%s opened no submenu' % ' > '.join(picked))
+                    continue
+                if not entry.IsEnabled():
+                    raise refuse('%s is disabled%s' % (' > '.join(picked), disabled_hint(entry)))
+                if not entry.HasFunction():
+                    raise refuse('%s %s' % (' > '.join(picked), 'opens a submenu: name an entry in it' if entry.HasSubMenuData()
+                                                else 'does nothing when clicked (a caption or a label)'))
+                run = entry.ExecuteFunction
+            value = self.settle(run, args, 'menu %s > %s' % (source, ' > '.join(picked)))
+        finally:
+            attempt(CloseContextMenus)
+        value['picked'] = picked
+        value['menu'] = source
+        return value
+
+    def item_menu(self, item):
+        from carbonui.control.contextMenu.menuDataFactory import CreateMenuDataFromRawTuples
+        raw = self.sm.GetService('menu').CelestialMenu(item)
+        data = CreateMenuDataFromRawTuples(raw)
+        if not data or not data.GetEntries():
+            raise refuse('item %s has no menu in the client (is it in the ballpark? client_ballpark lists them)' % item)
+        return data
+
+    def node_menu(self, holder):
+        from carbonui.control.contextMenu.contextMenu import ShowMenu
+        ShowMenu(holder)
+        view = attempt(lambda: holder.menuObject_weakref())
+        if view is None or attempt(lambda: view.destroyed, True) or getattr(view, 'menuData', None) is None:
+            raise refuse('the menu did not open: it has no entries, or the client blocks menus right now')
+        return view.menuData
+
+    # The entry of data that label names; the labels there are in the error for none or several.
+    def pick_entry(self, data, label, picked):
+        entries = [entry for entry in data.GetEntries() if entry is not None]
+        wanted = lower(plain_text(label))
+        if not wanted:
+            raise refuse('entry %r has no text to look for' % (label,))
+        rows = [(entry, lower(menu_text(entry)) or '') for entry in entries]
+        found = [entry for entry, text in rows if text == wanted] or [entry for entry, text in rows if wanted in text]
+        if len(found) == 1:
+            return found[0]
+        listed = ', '.join('"%s"%s%s' % (menu_text(entry), ' >' if entry.HasSubMenuData() else '',
+                                         '' if entry.IsEnabled() else ' (off)') for entry in entries)
+        where = ' in %s' % ' > '.join(picked) if picked else ''
+        raise refuse('%s entry "%s"%s; the entries are: %s' % ('no' if not found else '%d entries match' % len(found),
+                                                                  label, where, listed or '(none)'))
 
     # The node into names (as locate), focused first; else the focused one.
     def focused(self, into):

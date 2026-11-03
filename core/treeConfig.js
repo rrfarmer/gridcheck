@@ -33,7 +33,8 @@ const MODES = Object.freeze(["auto", "attach", "managed"]);
 const DEFAULT_MODE = "auto";
 const PATH_KEYS = Object.freeze(["serverDir", "dataRoot", "dataDir", "gameStore", "manifest", "logFile", "e2eDir",
   "worldsDir", "runsDir", "scenariosDir", "handshake"]);
-const KEYS = new Set(["configVersion", "mode", "nativeClient", "start", "listeners", "daemons", ...PATH_KEYS]);
+// node: the node that runs the server, when it isn't the one running the CLI (core/node.js).
+const KEYS = new Set(["configVersion", "mode", "nativeClient", "start", "node", "listeners", "daemons", ...PATH_KEYS]);
 const MARKET_KEYS = new Set(["enabled", "dir", "config", "database"]);
 const LISTENER_KEYS = new Set(["movable", "via"]);
 const MARKET_DIR = "externalservices/market-server";
@@ -213,6 +214,7 @@ function validateConfig(raw) {
   if (raw.nativeClient !== undefined && typeof raw.nativeClient !== "boolean") problems.push("nativeClient is true or false");
   for (const key of PATH_KEYS) if (raw[key] !== undefined && !validPath(raw[key])) problems.push(`${key} is a path`);
   if (raw.start !== undefined && !validStart(raw.start)) problems.push('start is an argv starting with "node", e.g. ["node", "."]');
+  if (raw.node !== undefined && !validPath(raw.node)) problems.push("node is the path of a node executable");
   if (raw.listeners !== undefined) {
     if (!isObject(raw.listeners)) problems.push("listeners is an object");
     else {
@@ -292,6 +294,7 @@ function loadTreeConfig(treeRoot, { env = process.env } = {}) {
     nativeClient: given.nativeClient === true,
     serverDir: absolute(treeRoot, merged.serverDir),
     start: merged.start,
+    node: validPath(given.node) ? path.resolve(treeRoot, given.node) : null,
     dataRoot,
     dataDir,
     gameStore,

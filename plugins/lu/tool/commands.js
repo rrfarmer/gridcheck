@@ -7,6 +7,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { cmdLuReload } = require("./reload");
 const triggerTools = require("./triggers");
 const warpTools = require("./warp");
 
@@ -270,6 +271,30 @@ function cmdEconomy(positionals, _flags, io) {
   if (!result.ok) io.setExitCode(1);
 }
 
+// `gridcheck lu-rpc <Method> [--payload <json>]`: sm.RemoteSvc('luCommand').<Method>(json.dumps(payload))
+// in the attached EVE client, as its character, with the reply decoded. The client's op rpc does the
+// call; every luCommand method takes and answers one JSON string.
+async function cmdLuRpc(positionals, flags, io) {
+  const [method, ...extra] = positionals;
+  if (!method || extra.length) throw new io.CliError("usage: gridcheck lu-rpc <Method> [--payload <json object>], e.g. lu-rpc Status");
+  let payload = {};
+  if (flags.payload !== undefined) {
+    try {
+      payload = JSON.parse(String(flags.payload));
+    } catch (error) {
+      throw new io.CliError(`--payload isn't JSON: ${error.message}`);
+    }
+    if (payload === null) throw new io.CliError("--payload takes a JSON value, not null");
+  }
+  const reply = await io.clientCommand("rpc", { service: "luCommand", method, payload }, {
+    ...(flags.user ? { user: flags.user } : {}),
+    ...(flags.timeout === undefined ? {} : { timeout: flags.timeout }),
+  });
+  const value = reply.value || {};
+  io.printRpcReply(value, flags);
+  return value;
+}
+
 // summary and needs feed `gridcheck help --json` and the GUI's Commands tab.
 const COMMANDS = {
   scouts: { usage: ["scouts [--all]"], summary: "Lists the scout flights, with their phase and where each one is.", needs: "up", run: cmdScouts },
@@ -283,6 +308,20 @@ const COMMANDS = {
     ],
     booleanFlags: ["go"],
     run: cmdTrigger,
+  },
+  "lu-rpc": {
+    usage: ["lu-rpc <Method> [--payload <json object>] [--out <file>] [--shape] [--user <account>]"],
+    summary: "Calls a Living Universe command (luCommand) from the attached EVE client, as its character, and prints the decoded reply " +
+      "(--shape: its keys, types and array lengths; --out saves it).",
+    needs: "up",
+    run: cmdLuRpc,
+  },
+  "lu-reload": {
+    usage: ["lu-reload [<module>] [--check] [--then \"<python>\"] [--user <account>] [--json]"],
+    summary: "Reloads a client module LU delivers at login (luCommand) in the running EVE client, from the server's own source: " +
+      "each file compiled under its name, so errors name file:line. --check only compiles it.",
+    needs: "up",
+    run: cmdLuReload,
   },
   clock: { usage: ["clock [--stages] [--json]"], summary: "The Living Universe clock and its offset; --stages adds its stages.", needs: "up",
     booleanFlags: ["stages"], run: cmdClock },
