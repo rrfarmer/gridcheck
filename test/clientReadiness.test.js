@@ -3,6 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
 const { nativeClientPorts, portsForSlot, serverEnvironment } = require("../core/ports");
 const { loadTreeConfig, validateConfig } = require("../core/treeConfig");
 const { prepareClientLaunch, waitForNativeChat } = require("../core/client");
@@ -63,6 +65,22 @@ test("wrong native ports, failed or obsolete Play and mismatched targets all ref
   assert.throws(() => prepareClientLaunch({ ...opts, run: () => ({ status: null, error: new Error("timeout") }) }), /timeout/);
   assert.throws(() => prepareClientLaunch({ ...opts, exe: path.join(opts.treeRoot, "other.exe") }), /different client/);
   assert.throws(() => prepareClientLaunch({ ...opts, run: () => ({ status: 0, stdout: "no completion marker" }) }), /preflight failed/);
+});
+
+test("Windows executes a Play dry run from a path with spaces using real cmd quoting", { skip: process.platform !== "win32" }, (t) => {
+  const treeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gridcheck play launch "));
+  t.after(() => fs.rmSync(treeRoot, { recursive: true, force: true }));
+  const exe = path.join(treeRoot, "client copy", "tq", "bin64", "exefile.exe");
+  const resfiles = path.join(treeRoot, "client copy", "ResFiles");
+  fs.writeFileSync(path.join(treeRoot, "Play.bat"), [
+    "@echo off", 'if "%EVEJS_DRY_RUN%"=="1" goto gate', "exit /b 9", ":gate",
+    `echo     Client: ${exe} /port:%EVEJS_SERVER_PORT%`, `echo     ResFiles: ${resfiles}`,
+    "echo     Proxy:  %EVEJS_MICROSERVICES_PUBLIC_URL%", "echo Dry run complete. Client launch skipped.", "exit /b 0",
+  ].join("\r\n") + "\r\n");
+  const result = prepareClientLaunch({ treeRoot, exe, resfiles,
+    dataRoot: path.join(treeRoot, "_local"), ports: nativeClientPorts(portsForSlot(141), true) });
+  assert.match(result.output, /Dry run complete/);
+  assert.equal(result.env.EO_REMOTEFILECACHEFOLDER, resfiles);
 });
 
 test("chat readiness waits for authentication, fails on popup and refuses a timeout", async () => {
