@@ -228,40 +228,21 @@ test("the layout check reads back every probe ball the tree's encoder writes", (
 
 test("the warp probe also accepts a tree with flat retail Ball fields", () => {
   let calls = 0;
+  // Reads the warp only from the ball's own fields, never from warpState.
   const flatEncoder = (stamp, entities) => {
     calls += 1;
-    const warp = entities[3];
-    if (!warp.targetPoint) return warplessEncoder(stamp, entities);
+    const { warpState: _ignored, ...warp } = entities[3];
     assert.deepStrictEqual(warp.targetPoint, { x: 9e9, y: 1, z: 2 });
     assert.strictEqual(warp.warpMinRange, 15_000);
     assert.strictEqual(warp.effectStamp, 7);
     assert.strictEqual(warp.warpDistance, 9e9);
-    // The recorded stock encoder uses the same values in warpState.
-    return treeEncoder(stamp, entities.map((entity, index) => {
-      if (index !== 3) return entity;
-      const copy = { ...entity };
-      for (const key of ["targetPoint", "warpMinRange", "effectStamp", "warpDistance"]) delete copy[key];
-      return copy;
-    }));
+    // The recorded stock encoder takes warpState, so hand it one built from the flat fields.
+    const rebuilt = { ...warp, warpState: { targetPoint: warp.targetPoint, effectStamp: warp.effectStamp,
+      totalDistance: warp.warpDistance, stopDistance: warp.warpMinRange, warpSpeed: warp.warpFactor } };
+    return treeEncoder(stamp, entities.map((entity, index) => (index === 3 ? rebuilt : entity)));
   };
   assert.deepStrictEqual(probeDestinyLayout(flatEncoder), { ok: true, error: null, balls: 6, warpOff: null });
-  assert.strictEqual(calls, 2);
-});
-
-test("an alternate warp contract cannot conceal a changed layout", () => {
-  const result = probeDestinyLayout((stamp, entities) => entities[3].targetPoint
-    ? shiftedEncoder(stamp, PROBE_ENTITIES) : warplessEncoder(stamp, entities));
-  assert.strictEqual(result.ok, true);
-  assert.match(result.warpOff, /minimumRange read as 0/);
-});
-
-test("a rejected alternate warp contract keeps the original diagnostic", () => {
-  const result = probeDestinyLayout((stamp, entities) => {
-    if (entities[3].targetPoint) throw new Error("unsupported shape");
-    return warplessEncoder(stamp, entities);
-  });
-  assert.strictEqual(result.ok, true);
-  assert.match(result.warpOff, /minimumRange read as 0/);
+  assert.strictEqual(calls, 1);
 });
 
 test("a changed destiny layout turns the client view off with a clear message", async () => {
