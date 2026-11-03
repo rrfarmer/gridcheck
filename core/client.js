@@ -86,7 +86,8 @@ function prepareClientLaunch({ treeRoot, exe, resfiles, ports, dataRoot, env = p
     cwd: treeRoot, env: { ...launchEnv, GRIDCHECK_PLAY_LAUNCHER: play, EVEJS_DRY_RUN: "1",
       EVEJS_SERVER_PORT: String(ports.game), EVEJS_MICROSERVICES_PORT: String(ports.gateway),
       EVEJS_MICROSERVICES_PUBLIC_URL: `http://127.0.0.1:${ports.gateway}/`, EVEJS_DATA_ROOT: dataRoot },
-    input: "", encoding: "utf8", windowsHide: true, timeout: 180000, maxBuffer: 4 * 1024 * 1024,
+    input: "", encoding: "utf8", windowsHide: true, windowsVerbatimArguments: true,
+    timeout: 180000, maxBuffer: 4 * 1024 * 1024,
   });
   const output = `${checked.stdout || ""}\n${checked.stderr || ""}`;
   if (checked.error || checked.status !== 0 || !output.includes("Dry run complete. Client launch skipped.")) {

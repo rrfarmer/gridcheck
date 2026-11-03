@@ -42,6 +42,7 @@ test("automation executes Play's complete dry run against the intended server be
     assert.deepEqual(args, ["/d", "/s", "/c", 'call "%GRIDCHECK_PLAY_LAUNCHER%"']);
     assert.equal(options.input, "");
     assert.equal(options.windowsHide, true);
+    assert.equal(options.windowsVerbatimArguments, true, "cmd receives batch quotes without C-runtime backslash escaping");
     assert.equal(options.env.EVEJS_DRY_RUN, "1");
     assert.equal(options.env.EVEJS_SERVER_PORT, "32820");
     assert.equal(options.env.EVEJS_MICROSERVICES_PUBLIC_URL, "http://127.0.0.1:32822/");
