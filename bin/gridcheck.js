@@ -49,7 +49,7 @@ const path = require("node:path");
 
 const { formatClock, formatGrid } = require("../core/format");
 const { collectIDs, createReorderBuffer, formatTimelineEvent, mentionsAny, parseLogLine } = require("../core/timeline");
-const { busyPorts, marketConfig, portsForTree, serverEnvironment, usableListeners } = require("../core/ports");
+const { busyPorts, marketConfig, portsForTree, nativeClientPorts, serverEnvironment, usableListeners } = require("../core/ports");
 const { DEFAULT_TREE_ROOT, defaultRegistry } = require("../core/plugins");
 const treeConfig = require("../core/treeConfig");
 const capabilities = require("../core/capabilities");
@@ -88,7 +88,7 @@ const MARKET_CONFIG_PATH = path.join(E2E_DIR, "market-server.toml");
 const MARKET_OUT_PATH = path.join(E2E_DIR, "market.out.log");
 const MARKET_BUILD_PATH = path.join(E2E_DIR, "market.build.log");
 const LISTENERS = usableListeners(REGISTRY.listeners);
-const TREE_PORTS = portsForTree(REPO_ROOT, process.env, LISTENERS);
+const TREE_PORTS = nativeClientPorts(portsForTree(REPO_ROOT, process.env, LISTENERS), CONFIG.nativeClient);
 const MODE = CONFIG.mode;
 const MANAGED = MODE === "managed";
 const AUTO = MODE === "auto";
@@ -1017,6 +1017,10 @@ async function clientLaunch(handshake, flags) {
   const listed = await callBridge(handshake, "GET", "/client/agents");
   const running = (listed.agents || []).find((row) => row.online && row.username === username);
   if (running && running.characterID) {
+    await clientTools.waitForNativeChat({
+      read: async () => (await clientCommand("eval", { code: clientTools.CHAT_READINESS_PYTHON }, { user: username })).value.json,
+      deadlineMs: Date.now() + 30000,
+    });
     console.log(`the ${username} client is already in game as character ${running.characterID}, pid ${running.pid || "?"}; ` +
       `using it (\`gridcheck client stop${flags.user ? ` --user ${username}` : ""}\` first for a new one)`);
     return { username, accountID: running.accountID, characterID: running.characterID, pid: running.pid || null,
@@ -1038,6 +1042,15 @@ async function clientLaunch(handshake, flags) {
   const exe = clientExe(flags);
   const resfiles = flags.resfiles ? path.resolve(String(flags.resfiles)) : clientTools.defaultResFiles(exe);
   if (!fs.existsSync(resfiles)) throw new CliError(`no resource cache at ${resfiles}; pass --resfiles <ResFiles folder>`);
+  if (flags.resfileserver && flags.resfileserver !== `http://127.0.0.1:${handshake.ports.gateway}/resfiles/`) {
+    throw new CliError("native launch requires the checked local gateway resource endpoint");
+  }
+  console.log("checking native client setup through Play.bat (dry run)...");
+  const prepared = clientTools.prepareClientLaunch({ treeRoot: REPO_ROOT, exe, resfiles,
+    ports: handshake.ports, dataRoot: CONFIG.dataRoot });
+  fs.mkdirSync(path.join(E2E_DIR, "client"), { recursive: true });
+  fs.writeFileSync(path.join(E2E_DIR, "client", "play-preflight.log"), prepared.output);
+  console.log("Play.bat patch, resources, certificate trust and offline/TLS gates passed");
   // Character names are unique server-wide, so not login's "Agent Observer".
   const { accountID, characterID } = await ensureCharacter(username, flags.name ? String(flags.name) : "Client Observer");
   const minted = await callBridge(handshake, "POST", "/client/token", { username, accountID });
@@ -1049,7 +1062,7 @@ async function clientLaunch(handshake, flags) {
   // The client's own output, with /noconsole; it can hold its command line, token included.
   const logfile = noConsole ? path.join(E2E_DIR, "client", `launch-${username.replace(/[^A-Za-z0-9_-]+/g, "_")}.log`) : null;
   const startedAtMs = Date.now();
-  const child = clientTools.startClient({ exe, args, logfile, env: clientTools.clientEnvironment({ resfiles, gatewayPort: gateway }) });
+  const child = clientTools.startClient({ exe, args, logfile, env: prepared.env });
   console.log(`started the EVE client as ${username} (account ${accountID}), entering as character ${characterID}` +
     `${logfile ? `; its output goes to ${relativePath(logfile)}` : ""}`);
   if (!(waitSeconds > 0)) return { username, accountID, characterID, pid: null, build: null, seconds: 0 };
@@ -1083,7 +1096,19 @@ async function clientLaunch(handshake, flags) {
     }
     if (agent.characterID === characterID) {
       // In game a few seconds before the client is docked or holds its ballpark, which every act needs.
-      const where = await clientSettledIn(username, startedAtMs + waitSeconds * 1000);
+      let where;
+      try {
+        where = await clientSettledIn(username, startedAtMs + waitSeconds * 1000);
+        await clientTools.waitForNativeChat({
+          read: async () => (await clientCommand("eval", { code: clientTools.CHAT_READINESS_PYTHON }, { user: username })).value.json,
+          deadlineMs: startedAtMs + waitSeconds * 1000,
+        });
+      } catch (error) {
+        // This agent attached after our spawn; never stop a reused client.
+        try { await stopClient(handshake, agent); } catch (_) { /* retain the launch error */ }
+        stopLauncher();
+        throw error;
+      }
       const seconds = Math.round((Date.now() - startedAtMs) / 1000);
       console.log(`in game as character ${characterID} after ${seconds} s` +
         `${where ? `, ${where.docked ? `docked at ${where.docked}` : "in space"} in ${where.solarSystemID}` : ""}`);
@@ -1729,6 +1754,10 @@ async function runClientLaunch(step) {
   const listed = await callBridge(handshake, "GET", "/client/agents");
   const online = (listed.agents || []).find((row) => row.online && row.username === username && row.characterID);
   if (online) {
+    await clientTools.waitForNativeChat({
+      read: async () => (await clientCommand("eval", { code: clientTools.CHAT_READINESS_PYTHON }, { user: username })).value.json,
+      deadlineMs: Date.now() + 30000,
+    });
     return { ok: true, text: `${username} was already in game as character ${online.characterID}, pid ${online.pid || "?"}; the run leaves it up` };
   }
   const launched = await clientLaunch(handshake, { ...step.launch, user: username, name: step.name, wait: step.seconds });

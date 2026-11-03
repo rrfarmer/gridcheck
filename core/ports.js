@@ -85,6 +85,13 @@ function portsForTree(treeRoot, env = process.env, listeners = []) {
   return portsForSlot(slotForTree(treeRoot, env), listeners);
 }
 
+// The supported native client uses fixed destinations for shared HTTPS and
+// XMPP. Moving only the server listeners breaks native login/chat. Opt in per
+// tree; busyPorts still refuses a conflict without touching another process.
+function nativeClientPorts(ports, enabled = false) {
+  return enabled ? Object.freeze({ ...ports, cdn: 443, xmpp: 5222 }) : ports;
+}
+
 // The environment that moves every listener of `npm start` onto the block.
 // The public URL carries the gateway port too: store and CDN links are built
 // from it, and the config loader derives the listen port from it.
@@ -146,6 +153,7 @@ async function busyPorts(ports, listeners = []) {
 }
 
 module.exports = {
+  nativeClientPorts,
   BLOCK_BASE,
   BLOCK_SIZE,
   LISTENER_ENV,

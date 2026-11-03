@@ -91,6 +91,21 @@ perf --for 10` measures server ticks; the primer covers performance runs.
 
 ## A real EVE client
 
+Set `"nativeClient": true` in `gridcheck.config.json` before starting a managed
+server for native testing. This retains its isolated game/gateway ports but
+reserves XMPP **5222** and shared HTTPS **443**, matching the supported client's
+destinations. Startup refuses occupied ports; preserve the owning session.
+Other headless trees can retain the default allocated ports.
+
+Client launch now runs the tree's actual `Play.bat` with `EVEJS_DRY_RUN=1` before
+minting a login token or spawning the game. Play's configured client/cache must
+match the selected executable/cache. Patch, resource, certificate, proxy and
+offline/TLS gates must pass. The output is retained in
+`_local/gridcheck/client/play-preflight.log`. After login, launch waits for
+native chat authentication/connection and fails on `RetryChatServerConnection`;
+never dismiss that popup or disable chat to pass a test. `--wait 0` starts without
+claiming login/chat readiness. A reused client also has its chat readiness checked.
+
 When the bug is in the client itself (its UI, what its ballpark holds, an exception it logs),
 `gridcheck client` starts the real EVE client and reads it from inside. The tree needs the opt-in
 `client-agent` patch; `gridcheck doctor` says whether it's applied and what else is missing.

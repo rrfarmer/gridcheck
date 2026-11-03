@@ -67,6 +67,59 @@ function clientEnvironment({ env = process.env, resfiles, gatewayPort }) {
   };
 }
 
+// Run the real launcher's gates, rather than maintaining a partial second
+// implementation. No login token exists yet. Closed stdin prevents a failed
+// batch gate's pause from hanging automation; the timeout also fails closed.
+function prepareClientLaunch({ treeRoot, exe, resfiles, ports, dataRoot, env = process.env,
+  platform = process.platform, run = spawnSync, readText = (file) => fs.readFileSync(file, "utf8") }) {
+  if (platform !== "win32") throw new Error("native client launch requires Windows and the tree's Play.bat preflight");
+  if (!ports || ports.xmpp !== 5222 || ports.cdn !== 443) {
+    throw new Error("native client requires XMPP :5222 and shared HTTPS :443; set nativeClient: true in gridcheck.config.json and restart the managed server. Do not dismiss the chat popup");
+  }
+  const play = path.join(treeRoot, "Play.bat");
+  if (!readText(play).includes('if "%EVEJS_DRY_RUN%"=="1"')) {
+    throw new Error("Play.bat has no supported dry-run gate; restore the current launcher before native testing");
+  }
+  if (/[\r\n"%!]/.test(play)) throw new Error("Play.bat's path contains unsupported batch expansion characters");
+  const launchEnv = clientEnvironment({ env, resfiles, gatewayPort: ports.gateway });
+  const checked = run(env.ComSpec || "cmd.exe", ["/d", "/s", "/c", 'call "%GRIDCHECK_PLAY_LAUNCHER%"'], {
+    cwd: treeRoot, env: { ...launchEnv, GRIDCHECK_PLAY_LAUNCHER: play, EVEJS_DRY_RUN: "1",
+      EVEJS_SERVER_PORT: String(ports.game), EVEJS_MICROSERVICES_PORT: String(ports.gateway),
+      EVEJS_MICROSERVICES_PUBLIC_URL: `http://127.0.0.1:${ports.gateway}/`, EVEJS_DATA_ROOT: dataRoot },
+    input: "", encoding: "utf8", windowsHide: true, timeout: 180000, maxBuffer: 4 * 1024 * 1024,
+  });
+  const output = `${checked.stdout || ""}\n${checked.stderr || ""}`;
+  if (checked.error || checked.status !== 0 || !output.includes("Dry run complete. Client launch skipped.")) {
+    throw new Error(`Play.bat preflight failed${checked.error ? `: ${checked.error.message}` : ""}:\n${output.slice(-12000)}`);
+  }
+  // Play's batch config may override a shell's client path. Require its actual
+  // resolved target/cache/endpoints to match the process we are about to spawn.
+  const normalized = output.replaceAll("\\", "/").toLowerCase();
+  const expected = [`Client: ${exe} `, `ResFiles: ${resfiles}`, `Proxy: http://127.0.0.1:${ports.gateway}`, `/port:${ports.game}`];
+  if (expected.some((text) => !normalized.includes(text.replaceAll("\\", "/").toLowerCase()))) {
+    throw new Error("Play.bat checked a different client, cache or endpoint; configure EvEJSConfig.bat to match this launch before testing");
+  }
+  return { env: launchEnv, output };
+}
+
+const CHAT_READINESS_PYTHON = [
+  "modal = uicore.registry.GetModalWindow()",
+  "chat = sm.GetService('XmppChat')",
+  "conn = chat.xmppConnection",
+  "result = {'failed': bool(modal and getattr(modal, 'msgKey', None) == 'RetryChatServerConnection'), 'ready': bool(chat.hasLoggedInOnce and conn and conn.IsConnected())}",
+].join("\n");
+
+async function waitForNativeChat({ read, deadlineMs, now = Date.now,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+  while (now() < deadlineMs) {
+    const state = await read();
+    if (state && state.failed) throw new Error("native chat connection failed (RetryChatServerConnection); fix the launch setup and rerun; never dismiss this popup");
+    if (state && state.ready) return;
+    await sleep(1000);
+  }
+  throw new Error("native chat did not authenticate/connect before the launch deadline; check XMPP endpoint, TLS trust and server logs");
+}
+
 // The client opens its own console ("[CCP] ... pid=N") and writes there with
 // WriteConsole, so redirecting its stdio catches nothing (Play.bat's stdio logs
 // stay empty too); readConsole reads that console instead. Started with
@@ -622,6 +675,9 @@ function actSummary(value) {
 }
 
 module.exports = {
+  CHAT_READINESS_PYTHON,
+  prepareClientLaunch,
+  waitForNativeChat,
   BALLPARK_LATE_MS,
   CONSOLE_PS1,
   LAUNCHER_CONFIG,

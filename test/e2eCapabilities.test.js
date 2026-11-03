@@ -183,7 +183,7 @@ test("a bridge whose tree writes another destiny layout keeps the client view of
     else await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.ok(handshake, "the bridge wrote its handshake");
-  assert.deepEqual(handshake.ports, { game: 26000, gateway: 26002 }, "attach mode reads the server's own ports");
+  assert.deepEqual(handshake.ports, { game: 26000, gateway: 26002, xmpp: 5222, cdn: 443 }, "attach mode reads the server's own ports");
   assert.equal(handshake.logFile, path.join("/data-root", "logs", "server.log"));
   assert.equal(handshake.dataDir, "/store/data");
   assert.equal(handshake.treeRoot, root);
@@ -200,7 +200,7 @@ test("a bridge whose tree writes another destiny layout keeps the client view of
   assert.deepEqual(capabilities.gateway.missing, []);
   assert.deepEqual(capabilities.plugins.skipped.map((row) => row.name), ["lu"]);
   assert.equal(capabilities.live.session.gatewayClientID, true);
-  assert.deepEqual(capabilities.live.ports, { game: 26000, gateway: 26002, agentBridge: handshake.port });
+  assert.deepEqual(capabilities.live.ports, { game: 26000, gateway: 26002, xmpp: 5222, cdn: 443, agentBridge: handshake.port });
 
   const tee = JSON.parse(await call("POST", "/tee", { characterID: 7 }));
   assert.equal(tee.ok, false);

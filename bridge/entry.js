@@ -52,13 +52,15 @@ function handshakePath(treeRoot, env = process.env) {
 }
 
 // The server's own game and gateway ports, as its config resolved them.
-function serverPorts(stock) {
+function serverPorts(stock, env = process.env) {
   const config = optional(() => stock.config) || {};
   const port = (value) => {
     const numeric = Math.trunc(Number(value) || 0);
     return numeric > 0 && numeric < 65536 ? numeric : null;
   };
-  return { game: port(config.serverPort), gateway: port(config.microservicesPort) };
+  return { game: port(config.serverPort), gateway: port(config.microservicesPort),
+    xmpp: port(env.EVEJS_XMPP_SERVER_PORT) || 5222,
+    cdn: port(env.EVEJS_PROXY_LOOPBACK_CDN_LISTEN_PORT) || 443 };
 }
 
 // The client view runs only if the decoder reads this tree's ball layout.
@@ -227,7 +229,7 @@ function createService({ serverRoot, stock: givenStock = null, pluginsDir = DEFA
         },
         live: {
           pid: process.pid,
-          ports: { ...serverPorts(stock), agentBridge: bridge ? bridge.port() : null },
+          ports: { ...serverPorts(stock, env), agentBridge: bridge ? bridge.port() : null },
           ...(characterID ? { characterID, session: sessionShape(session) } : {}),
         },
       }),
@@ -240,7 +242,7 @@ function createService({ serverRoot, stock: givenStock = null, pluginsDir = DEFA
       // What attach mode needs to find this server's gateway, log and store.
       handshakeExtra: () => ({
         treeRoot,
-        ports: serverPorts(stock),
+        ports: serverPorts(stock, env),
         logFile: optional(() => stock.dataRoot.resolveDataRootPath("logs", "server.log")) || config.logFile,
         dataDir: optional(() => stock.storeRoot.resolveDataDir()) || config.dataDir,
         tool: copyInfo(),
