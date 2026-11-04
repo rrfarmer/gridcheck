@@ -1,0 +1,85 @@
+{
+  "description": "AIR NPE act 2 (chapters 2.1-2.4, up to 2.5.01) played end to end by a real EVE client, carrying on from air-npe-act1 with the same character (account airsof, character Aira Soldier): mining site, market, wallet, career program, stargate travel to the career station, career agent, and the reward reminder, which on the Soldier of Fortune career path plays that path's career mission(s). Ends with get_air_npe_state = 2.",
+  "world": "fresh",
+  "watch": {
+    "screenshots": [
+      "stop"
+    ]
+  },
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "airsof",
+        "name": "Aira Soldier",
+        "settingsProfile": "airsof"
+      },
+      "note": "re-enters the character act 1 left in act 2"
+    },
+    {
+      "clientEval": {
+        "file": "air/air_lib.py"
+      },
+      "timeout": 60,
+      "note": "loads the driver's helpers"
+    },
+    {
+      "clientEval": {
+        "file": "air/air_npe.py"
+      },
+      "timeout": 60,
+      "note": "loads the driver"
+    },
+    {
+      "clientEval": {
+        "file": "air/air_boot.py"
+      },
+      "timeout": 60,
+      "note": "starts the driver"
+    },
+    {
+      "clientEval": "air_set_path('soldier')",
+      "timeout": 30,
+      "note": "the Soldier of Fortune career path"
+    },
+    {
+      "repeat": [
+        {
+          "clientEval": "air_play(until='2.5.01_acp_reward_reminder', budget_ms=280000)",
+          "timeout": 300
+        }
+      ],
+      "every": 1,
+      "times": 8,
+      "note": "each round plays tasks for up to 280 s; a stuck task raises after three plays"
+    },
+    {
+      "clientEval": "air_reached('2.5.01_acp_reward_reminder')",
+      "assert": true,
+      "timeout": 30,
+      "note": "act 2 is done: the active task is 2.5.01"
+    },
+    {
+      "clientEval": "[t for _, t in agent.air_log]",
+      "timeout": 30,
+      "note": "every task the client graph went through, in order"
+    }
+  ],
+  "until": {
+    "any": [
+      "CLIENT_EVENT"
+    ],
+    "from": "start",
+    "timeout": 10,
+    "grace": 2
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=action",
+      "note": "the client agent acted"
+    },
+    {
+      "match": "no CLIENT_EVENT text~\"New Player Experience\"",
+      "note": "the client never asked to leave the AIR NPE"
+    }
+  ]
+}

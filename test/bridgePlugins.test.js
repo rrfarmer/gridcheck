@@ -59,10 +59,13 @@ test("the loader takes plugins that apply, and skips the rest with one line each
   assert.match(started.skipped.find((entry) => entry.name === "crashy").reason, /server\(\) threw: no engine/);
 });
 
-test("the shipped lu plugin skips a tree without Living Universe, and names what is missing", () => {
+test("the shipped plugins skip a tree without their mod, and name what is missing", () => {
   const loaded = loadPlugins({ pluginsDir: DEFAULT_PLUGINS_DIR, tree: { resolve: () => null } });
   assert.deepEqual(loaded.active, []);
-  assert.deepEqual(loaded.skipped, [{ name: "lu", reason: "no Living Universe in this tree (no server/src/modApi.js)" }]);
+  assert.deepEqual(loaded.skipped, [
+    { name: "air", reason: "no AIR runtime in this tree (no server/src/services/npe/airNpeRuntime.js)" },
+    { name: "lu", reason: "no Living Universe in this tree (no server/src/modApi.js)" },
+  ]);
 });
 
 test("the route table: exact routes, a /* prefix with its rest, and core routes a plugin can't take", async () => {
@@ -212,7 +215,10 @@ test("on a tree without Living Universe the lu plugin is skipped, and /grid and 
 
   assert.deepEqual(service.__testing.pluginStatus(), {
     active: [],
-    skipped: [{ name: "lu", reason: "no Living Universe in this tree (no server/src/modApi.js)" }],
+    skipped: [
+      { name: "air", reason: "no AIR runtime in this tree (no server/src/services/npe/airNpeRuntime.js)" },
+      { name: "lu", reason: "no Living Universe in this tree (no server/src/modApi.js)" },
+    ],
   });
   assert.equal(logger.lines.filter((line) => line.includes("plugin lu")).length, 1, logger.lines.join("\n"));
 

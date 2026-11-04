@@ -198,7 +198,7 @@ test("a bridge whose tree writes another destiny layout keeps the client view of
   assert.equal(capabilities.destiny.tee, "off");
   assert.match(capabilities.destiny.error, /not the one the decoder reads/);
   assert.deepEqual(capabilities.gateway.missing, []);
-  assert.deepEqual(capabilities.plugins.skipped.map((row) => row.name), ["lu"]);
+  assert.deepEqual(capabilities.plugins.skipped.map((row) => row.name), ["air", "lu"]);
   assert.equal(capabilities.live.session.gatewayClientID, true);
   assert.deepEqual(capabilities.live.ports, { game: 26000, gateway: 26002, xmpp: 5222, cdn: 443, agentBridge: handshake.port });
 

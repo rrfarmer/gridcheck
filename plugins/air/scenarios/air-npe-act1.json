@@ -1,0 +1,80 @@
+{
+  "description": "AIR NPE act 1 (chapters 1.1-1.5) played end to end by a real EVE client. A fresh character (account airnpe, character Aira Tutorial) enters the AIR opening and the driver in air/air_npe.py plays each step through the client's own UI and services, as the client graphs ask for them, until the act 2 opportunity is accepted. Needs the client-agent patch, a server in tutorial mode (EVEJS_NEW_CHARACTER_EXPERIENCE_MODE=tutorial) and a fresh data root (the character is made on first launch).",
+  "world": "fresh",
+  "watch": {
+    "screenshots": [
+      "stop"
+    ]
+  },
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "airnpe",
+        "name": "Aira Tutorial",
+        "settingsProfile": "airnpe"
+      },
+      "note": "native character creation puts a new character into the AIR opening"
+    },
+    {
+      "clientEval": {
+        "file": "air/air_lib.py"
+      },
+      "timeout": 60,
+      "note": "loads the driver's helpers"
+    },
+    {
+      "clientEval": {
+        "file": "air/air_npe.py"
+      },
+      "timeout": 60,
+      "note": "loads the driver"
+    },
+    {
+      "clientEval": {
+        "file": "air/air_boot.py"
+      },
+      "timeout": 60,
+      "note": "starts the driver"
+    },
+    {
+      "repeat": [
+        {
+          "clientEval": "air_play(until='2.1.01_enter_mining_site', budget_ms=280000)",
+          "timeout": 300
+        }
+      ],
+      "every": 1,
+      "times": 8,
+      "note": "each round plays tasks for up to 280 s; a stuck task raises after three plays"
+    },
+    {
+      "clientEval": "air_reached('2.1.01_enter_mining_site')",
+      "assert": true,
+      "timeout": 30,
+      "note": "act 1 is done: the active task is in act 2"
+    },
+    {
+      "clientEval": "[t for _, t in agent.air_log]",
+      "timeout": 30,
+      "note": "every task the client graph went through, in order"
+    }
+  ],
+  "until": {
+    "any": [
+      "CLIENT_EVENT"
+    ],
+    "from": "start",
+    "timeout": 10,
+    "grace": 2
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=action",
+      "note": "the client agent acted"
+    },
+    {
+      "match": "no CLIENT_EVENT text~\"New Player Experience\"",
+      "note": "the client never asked to leave the AIR NPE"
+    }
+  ]
+}
