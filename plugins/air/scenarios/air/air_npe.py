@@ -739,6 +739,13 @@ def h_acp_reward_reminder():
         _sleep(3000)
         if part + 1 < parts and not done_goal():
             _accept_next(agentID)
+    for w in uicore.registry.GetWindows():
+        if not w.destroyed and w.name.startswith('AgentConversation_'): _close(w.name)
+    # The goal's reward reaches the career portal a moment after the turn-in: wait for it before
+    # pressing Claim All, or the press claims nothing and the step waits for good.
+    wait_until(lambda: done_goal() or _goal_done_claimed(), 120000)
+    _wait_text('NEOCOM', 30000)
+    h_acp_claim_all()
 def _accept_next(agentID):
     # At the agent's station (a gift lands there), take the chain's next part: the window shows the
     # new offer at once after a turn-in, or a Request Mission button.
@@ -749,13 +756,6 @@ def _accept_next(agentID):
     if not walk(w, lambda m: getattr(m, 'name', '') == 'AcceptMission_Button', []):
         _agent_button(agentID, 'RequestMission_Button')
     _agent_button(agentID, 'AcceptMission_Button')
-    for w in uicore.registry.GetWindows():
-        if not w.destroyed and w.name.startswith('AgentConversation_'): _close(w.name)
-    # The goal's reward reaches the career portal a moment after the turn-in: wait for it before
-    # pressing Claim All, or the press claims nothing and the step waits for good.
-    wait_until(lambda: done_goal() or _goal_done_claimed(), 120000)
-    _wait_text('NEOCOM', 30000)
-    h_acp_claim_all()
 def h_help():
     uthread.new(uicore.cmd.OpenAgencyNew); _sleep(4000)
     tab = _node('AgencyWndNew', '69')
