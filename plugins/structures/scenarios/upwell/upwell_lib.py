@@ -193,9 +193,17 @@ def up_deploy(typeID, name, weekday=4, hour=18):
     sd = sm.GetService('structureDeployment')
     if sd.IsDeploying():
         sd.CancelDeployment()
-    sd.Deploy(item)
+    # Deploy returns without opening its window while the ship is not yet in space after a
+    # session change or a move (InShipInSpace, the inflight view); try again until it opens.
+    for k in range(10):
+        sd.Deploy(item)
+        if up_wait(lambda: sd.entity is not None, 3000, 250):
+            break
+        up_sleep(3000)
     up_sleep(2000)
     e = sd.entity
+    if e is None:
+        raise RuntimeError('the deploy window did not open for %s' % typeID)
     e.movingOffset = (0, 0, 0)
     radius = evetypes.GetRadius(typeID)
     shipRadius = up_bp().GetBall(session.shipid).radius
