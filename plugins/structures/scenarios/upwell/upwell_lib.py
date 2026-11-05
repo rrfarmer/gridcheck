@@ -423,10 +423,20 @@ def up_build_a(typeID, name, move_km=3000, warp_to=None):
     up_undock()
     if warp_to:
         up_warp_to(warp_to, 0)
+        up_sleep(4000)
+        structureID = up_deploy(typeID, name)
     else:
-        up_move_away(move_km)
-    up_sleep(4000)
-    structureID = up_deploy(typeID, name)
+        # A hop can land within 1,000 km of a structure an earlier run left; hop on.
+        for hop in range(4):
+            up_move_away(move_km)
+            up_sleep(4000)
+            try:
+                structureID = up_deploy(typeID, name)
+                break
+            except RuntimeError as e:
+                if hop == 3 or 'no free spot' not in str(e):
+                    raise
+                up_log('hop again', typeID, str(e))
     path = up_walk(structureID, until=(102, 110))
     docked = up_dock(structureID)
     agent.up_current = {'typeID': typeID, 'structureID': structureID, 'name': name,
