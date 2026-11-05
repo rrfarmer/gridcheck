@@ -170,11 +170,16 @@ def up_load_hull(typeID):
     return up_wait(lambda: [i for i in up_cargo() if i.typeID == typeID], 10000)[0].itemID
 
 
-def up_undock():
-    if not (session.stationid or session.structureid):
-        return session.solarsystemid
-    uicore.cmd.CmdExitStation()
-    up_wait(lambda: session.solarsystemid and not session.stationid and not session.structureid and up_bp(), 60000)
+def up_undock(tries=5):
+    # The client drops an undock asked for within 10 s of the last session change
+    # (SESSIONCHANGEDELAY), e.g. right after login or boarding, so it is asked again.
+    for k in range(tries):
+        if not (session.stationid or session.structureid):
+            break
+        uicore.cmd.CmdExitStation()
+        up_wait(lambda: not session.stationid and not session.structureid and up_bp(), 20000)
+    if session.stationid or session.structureid:
+        raise RuntimeError('still docked after %d undock tries' % tries)
     up_sleep(12000)
     return session.solarsystemid
 
