@@ -764,8 +764,13 @@ def up_shoot_layer(structureID, layer, leave_fraction=0.01, real_seconds=60):
 def up_find_structure(nameFragment):
     # A structure in the current system by name, from the ballpark (Upwell structures are seen
     # system-wide).
+    # Docked there is no ballpark; the owner's corporation list has its own structures.
     bp = up_bp()
-    hits = [k for k, v in bp.slimItems.items() if v.categoryID == const.categoryStructure and nameFragment in (getattr(v, 'name', '') or '')]
+    hits = []
+    if bp is not None:
+        hits = [k for k, v in bp.slimItems.items() if v.categoryID == const.categoryStructure and nameFragment in (getattr(v, 'name', '') or '')]
+    if not hits:
+        hits = [k for k, v in sm.RemoteSvc('structureDirectory').GetMyCorporationStructures().items() if nameFragment in (v.itemName or '')]
     return hits[0] if hits else None
 
 
