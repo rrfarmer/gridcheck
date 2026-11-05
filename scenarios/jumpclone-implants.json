@@ -1,0 +1,21 @@
+{
+  "description": "Jump clones in a real EVE client: after the Augmentations tab has cached the implants, a clone jump (a swap in one station, a jump from the pod to another station, a swap from inside a ship) refreshes the cache and offers Plug In Implant again; a named clone keeps its name after being entered and left; a swap in one station neither waits for nor starts the cooldown, and a remote jump during it is refused. Needs the client-agent patch and a fresh world (the character must have no jump clones yet). Driver: jumpclone/jumpclone.py.",
+  "world": "fresh",
+  "watch": { "screenshots": ["stop"] },
+  "setup": [
+    { "clientLaunch": { "user": "jumpclone", "name": "Jump Clone Tester" }, "note": "leaves the AIR tutorial, which would ask Skip NPE? before the first jump" },
+    { "clientEval": { "file": "jumpclone/jumpclone.py" }, "timeout": 30, "note": "loads the driver" },
+    { "clientEval": "jc_step_setup()", "assert": true, "timeout": 120, "note": "Infomorph Psychology V, docked, an Ocular Filter fitted, a clone installed here" },
+    { "clientEval": "jc_step_local_swap()", "assert": true, "timeout": 120, "note": "Augmentations open, swap into the empty clone: cache clears, Plug In Implant offered, timer unchanged" },
+    { "clientEval": "jc_step_swap_back()", "assert": true, "timeout": 120, "note": "the clone named Industry keeps its name after being entered and left" },
+    { "clientEval": "jc_step_remote_from_pod()", "assert": true, "timeout": 180, "note": "from the pod at another station: cache shows the new body's implants without a relog" },
+    { "clientEval": "jc_step_swap_from_ship()", "assert": true, "timeout": 180, "note": "from inside a ship: the Jump button unboards, the cache clears, timer unchanged" },
+    { "clientEval": "jc_step_cooldown_refuses_remote()", "assert": true, "timeout": 60, "note": "during the cooldown a jump to another station is refused" }
+  ],
+  "until": { "any": ["CLIENT_EXCEPTION"], "timeout": 5, "grace": 2 },
+  "expect": [
+    { "match": "no CLIENT_EXCEPTION where~clonejump", "note": "the clone jump service raised nothing" },
+    { "match": "no CLIENT_EXCEPTION where~skillsvc", "note": "nor did the skills service refreshing its implants" },
+    { "match": "no CLIENT_EXCEPTION where~jumpClonesPanel", "note": "nor the character sheet's clone list" }
+  ]
+}

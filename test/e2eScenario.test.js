@@ -313,7 +313,7 @@ test("every shipped scenario loads", LU, () => {
   }
   for (const row of rows) {
     const raw = JSON.parse(fs.readFileSync(row.file, "utf8"));
-    assert.doesNotThrow(() => validateScenario(raw, { ...STUBS, worldExists: () => true, defaultName: row.name }), row.name);
+    assert.doesNotThrow(() => validateScenario(raw, { ...STUBS, worldExists: () => true, defaultName: row.name, source: row.file }), row.name);
   }
 });
 
