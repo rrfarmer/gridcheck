@@ -9,6 +9,7 @@
   "setup": [
     {
       "clientLaunch": {
+        "tutorial": true,
         "user": "airenf",
         "name": "Aira Enforcer",
         "settingsProfile": "airenf"

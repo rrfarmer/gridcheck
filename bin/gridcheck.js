@@ -102,7 +102,7 @@ const AUTO = MODE === "auto";
 
 const BOOLEAN_FLAGS = new Set(["all", "json", "any-pid", "force", "fresh", "no-market", "no-log", "help",
   "check", "keep-up", "reuse", "positions", "once", "serve", "offline", "dry-run", "profile", "perf", "now", "detach", "mcp", "save", "hidden",
-  "double", "set", "enter", "list", "any-build", "assert", "no-console", "keep-clients", "clients", "npc", "no-modules",
+  "double", "set", "enter", "list", "any-build", "assert", "no-console", "tutorial", "keep-clients", "clients", "npc", "no-modules",
   "noise", "exceptions", "shape", "inherited", "reads",
   ...REGISTRY.booleanFlags]);
 
@@ -1270,6 +1270,22 @@ function headlessAccounts() {
   return new Set(rows.map((row) => row && row.username).filter(Boolean).map(String));
 }
 
+// A launched client leaves the AIR tutorial unless --tutorial: in it, the client asks
+// "Skip NPE?" before any action off the tutorial's path, and an answer of Yes there
+// skips it anyway. The AIR plugin's scenarios pass tutorial: true.
+async function leaveTutorial(username, flags) {
+  if (flags.tutorial === true) return;
+  let state;
+  try {
+    state = (await clientCommand("eval", { code: clientTools.SKIP_TUTORIAL_PYTHON }, { user: username, timeout: 30 })).value.json;
+  } catch (error) {
+    console.log(`  could not leave the AIR tutorial: ${error.message}`);
+    return;
+  }
+  if (state === "skipped") console.log("  left the AIR tutorial (its Skip Tutorial); --tutorial keeps it");
+  else if (state === "pending") console.log("  asked to leave the AIR tutorial; the server hasn't confirmed yet");
+}
+
 async function clientLaunch(handshake, flags) {
   const username = String(flags.user || "e2eclient");
   if (headlessAccounts().has(username)) {
@@ -1285,6 +1301,7 @@ async function clientLaunch(handshake, flags) {
     });
     console.log(`the ${username} client is already in game as character ${running.characterID}, pid ${running.pid || "?"}; ` +
       `using it (\`gridcheck client stop${flags.user ? ` --user ${username}` : ""}\` first for a new one)`);
+    await leaveTutorial(username, flags);
     if (running.pid && !clientRecord.readLaunched(E2E_DIR)[username]) {
       clientRecord.recordLaunched(E2E_DIR, username, { pid: running.pid, characterID: running.characterID, accountID: running.accountID, flags });
     }
@@ -1375,6 +1392,7 @@ async function clientLaunch(handshake, flags) {
       const seconds = Math.round((Date.now() - startedAtMs) / 1000);
       console.log(`in game as character ${characterID} after ${seconds} s` +
         `${where ? `, ${where.docked ? `docked at ${where.docked}` : "in space"} in ${where.solarSystemID}` : ""}`);
+      await leaveTutorial(username, flags);
       // So `client stop`, `down` and `restart --client` find it once the bridge is gone.
       clientRecord.recordLaunched(E2E_DIR, username, { pid: agent.pid || null, characterID, accountID, launchedAtMs: startedAtMs, flags });
       return { username, accountID, characterID, pid: agent.pid || null, build: agent.build || null, seconds };
@@ -4052,7 +4070,7 @@ const CORE_COMMANDS = {
   logout: { usage: ["logout"], run: () => cmdLogout() },
   client: {
     usage: ["client launch [--user e2eclient] [--name \"...\"] [--exe <exefile.exe>] [--resfiles <folder>] [--resfileserver <url>] [--wait 240]" +
-      " [--settings-profile <name>] [--graphics dx11|dx12] [--no-console]",
+      " [--settings-profile <name>] [--graphics dx11|dx12] [--no-console] [--tutorial]",
       "client status [--json] | client stop [--user] | client ping [--user] | client eval \"<python>\" | --file <py> [--vars <json>] [--assert] [--out <json>] [--user] [--timeout 15] [--json]",
       "client ui-state [--limit 10000] [--out <json>] | client check-ui --spec <json> | --file <json> [--wait 0] [--stable <ms>] [--out <json>] [--user]",
       "client console [--lines 60] [--grep <regex>] [--pid N] | client ui [--class <text>] [--name <text>] [--text <text>] [--window <window>] [--depth N] [--hidden] [--limit N] [--json]",

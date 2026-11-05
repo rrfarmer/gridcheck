@@ -118,6 +118,40 @@ const CHAT_READINESS_PYTHON = [
   "result = {'failed': bool(modal and getattr(modal, 'msgKey', None) == 'RetryChatServerConnection'), 'ready': bool(chat.hasLoggedInOnce and conn and conn.IsConnected())}",
 ].join("\n");
 
+// The AIR tutorial, left the way the client's own Skip Tutorial button leaves it
+// (systemmenu.SkipTutorial -> storylines/client/airnpe.skip_air_npe), without its
+// confirmation. A character in the tutorial gets "Skip NPE?" for any off-path action
+// (a clone jump, an undock), so `client launch` runs this unless --tutorial.
+// 'skipped' once the server has said so, 'none' when the tutorial wasn't active
+// (or this build has no AIR NPE), 'pending' when the server hasn't answered yet.
+// Just after entering the game the controller's cached state can still say "not
+// active" while the server has the character in the tutorial, so this asks the
+// server (air_npe.get_air_npe_state: 1 active, 2 completed, 3 skipped) and waits
+// up to 10 s for it to know.
+const SKIP_TUTORIAL_PYTHON = [
+  "try:",
+  "    from storylines.client.airnpe import get_air_npe_controller",
+  "except ImportError:",
+  "    get_air_npe_controller = None",
+  "state = None",
+  "if get_air_npe_controller is not None:",
+  "    npe = get_air_npe_controller()",
+  "    for _ in range(40):",
+  "        state = npe.remote_air_npe_controller.get_air_npe_state()",
+  "        if state in (1, 2, 3): break",
+  "        blue.pyos.synchro.SleepWallclock(250)",
+  "if state != 1:",
+  "    result = 'none'",
+  "else:",
+  "    npe.cached_air_npe_state_by_character[session.charid] = state",
+  "    npe.skip_air_npe(False)",
+  "    for _ in range(40):",
+  "        state = npe.remote_air_npe_controller.get_air_npe_state()",
+  "        if state != 1: break",
+  "        blue.pyos.synchro.SleepWallclock(250)",
+  "    result = 'pending' if state == 1 else 'skipped'",
+].join("\n");
+
 async function waitForNativeChat({ read, deadlineMs, now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   while (now() < deadlineMs) {
@@ -750,6 +784,7 @@ function actSummary(value) {
 
 module.exports = {
   CHAT_READINESS_PYTHON,
+  SKIP_TUTORIAL_PYTHON,
   prepareClientLaunch,
   waitForNativeChat,
   BALLPARK_LATE_MS,

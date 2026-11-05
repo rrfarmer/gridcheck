@@ -9,6 +9,7 @@
   "setup": [
     {
       "clientLaunch": {
+        "tutorial": true,
         "user": "airexp",
         "name": "Aira Explorer",
         "settingsProfile": "airnpe"

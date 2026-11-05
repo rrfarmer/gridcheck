@@ -102,7 +102,7 @@ const CLIENT_ACTS = ["undock", "dock", "jump", "warpTo", "approach", "orbit", "k
   "activate", "deactivate", "logoff", "select"];
 const CLIENT_ACTS_TARGETED = new Set(["jump", "warpTo", "approach", "orbit", "keepAtRange", "lock", "unlock", "select"]);
 const NODE_KEYS = ["class", "name", "text", "path", "index", "hidden"];
-const CLIENT_LAUNCH_KEYS = ["user", "name", "exe", "resfiles", "resfileserver", "settingsProfile", "graphics", "noConsole"];
+const CLIENT_LAUNCH_KEYS = ["user", "name", "exe", "resfiles", "resfileserver", "settingsProfile", "graphics", "noConsole", "tutorial"];
 const DEFAULT_CLIENT_LAUNCH_SECONDS = 240;
 const DEFAULT_CLIENT_UI_SECONDS = 30;
 const DEFAULT_CLIENT_CHECK_UI_SECONDS = 15;
@@ -629,6 +629,10 @@ function validateScenario(raw, { source = "scenario", defaultName = null, worldE
             if (value.noConsole !== undefined) {
               if (typeof value.noConsole !== "boolean") problem(`${where}.clientLaunch.noConsole`, "true or false");
               else launch["no-console"] = value.noConsole;
+            }
+            if (value.tutorial !== undefined) {
+              if (typeof value.tutorial !== "boolean") problem(`${where}.clientLaunch.tutorial`, "true or false");
+              else launch.tutorial = value.tutorial;
             }
             const switches = launchSwitches({ settingsProfile: value.settingsProfile, graphics: value.graphics });
             if (switches.error) problem(`${where}.clientLaunch`, switches.error);

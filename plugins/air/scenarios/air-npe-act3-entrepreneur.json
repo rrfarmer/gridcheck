@@ -9,6 +9,7 @@
   "setup": [
     {
       "clientLaunch": {
+        "tutorial": true,
         "user": "airent",
         "name": "Aira Entrepreneur",
         "settingsProfile": "airent"

@@ -83,3 +83,23 @@ test("a scenario's clientLaunch takes launch's flags; MCP passes them on", () =>
   assert.deepStrictEqual(mcp.cliArgs("client_launch", { settingsProfile: "GridcheckUI", graphics: "dx12", noConsole: true }),
     ["client", "--settings-profile=GridcheckUI", "--graphics=dx12", "--no-console", "--", "launch"]);
 });
+
+test("launch leaves the AIR tutorial unless a scenario or the caller asks to keep it", () => {
+  const scenario = (clientLaunch) => validateScenario({ name: "launch", world: "fresh", setup: [{ clientLaunch }],
+    until: { timeout: 2 }, expect: ["GRID"] }).setup.find((row) => row.type === "clientLaunch");
+  assert.deepStrictEqual(scenario({ tutorial: true }).launch, { tutorial: true });
+  assert.throws(() => scenario({ tutorial: "yes" }), /clientLaunch\.tutorial/);
+  assert.deepStrictEqual(mcp.cliArgs("client_launch", { tutorial: true }), ["client", "--tutorial", "--", "launch"]);
+  // The client's own Skip Tutorial path, without its confirmation dialog.
+  const { SKIP_TUTORIAL_PYTHON } = require("../core/client");
+  assert.match(SKIP_TUTORIAL_PYTHON, /skip_air_npe\(False\)/);
+  assert.match(SKIP_TUTORIAL_PYTHON, /except ImportError/, "a build without the AIR NPE is left alone");
+  // Every AIR scenario plays the tutorial, so each launch keeps it.
+  const dir = path.join(__dirname, "..", "plugins", "air", "scenarios");
+  for (const file of fs.readdirSync(dir).filter((name) => name.endsWith(".json"))) {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+    for (const row of raw.setup || []) {
+      if (row.clientLaunch) assert.strictEqual(row.clientLaunch.tutorial, true, file);
+    }
+  }
+});

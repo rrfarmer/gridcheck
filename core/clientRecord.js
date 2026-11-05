@@ -11,7 +11,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 // The launch options worth keeping for a relaunch, as `client launch` flags.
-const LAUNCH_FLAGS = Object.freeze(["user", "name", "exe", "resfiles", "resfileserver", "settings-profile", "graphics", "no-console"]);
+const LAUNCH_FLAGS = Object.freeze(["user", "name", "exe", "resfiles", "resfileserver", "settings-profile", "graphics", "no-console", "tutorial"]);
 const CLIENT_IMAGE = /^exefile(\.exe)?$/i;
 
 function recordPath(e2eDir) {

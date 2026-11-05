@@ -120,7 +120,7 @@ When the bug is in the client itself (its UI, what its ballpark holds, an except
 `client-agent` patch; `gridcheck doctor` says whether it's applied and what else is missing.
 
 ```
-gridcheck client launch            # logged in and in game; its own account, e2eclient
+gridcheck client launch            # logged in and in game; its own account, e2eclient; leaves the AIR tutorial (--tutorial keeps it)
 gridcheck client ui --text undock  # UI nodes whose text contains it, with path, rect and state
 gridcheck client screenshot        # what it draws, as a PNG; works while covered or minimized
 gridcheck client screenshot --window <window> --fresh   # one window, drawn after this call

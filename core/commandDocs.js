@@ -197,6 +197,7 @@ const DOCS = {
       ["--wait <s>", "240", "How long launch waits for the client to reach the game, at most 600; 0 doesn't wait."],
       ["--settings-profile <name>", "the client's default", "launch: a settings profile of its own (the client's preferences), apart from a player's."],
       ["--graphics dx11|dx12", "the client's choice", "launch: the renderer."],
+      ["--tutorial", null, "launch: keep the character in the AIR tutorial. Without it, launch leaves the tutorial as the client's Skip Tutorial does, so actions off its path (a clone jump, an undock) don't ask \"Skip NPE?\"."],
       ["--no-console", null, "launch: no console window; the client's output goes to _local/gridcheck/client/launch-<user>.log, and a known startup failure (no graphics adapter ...) ends the wait at once."],
       ["--timeout <s>", "15; 60 for wait", "How long a command waits for the client; for wait, how long to wait for the value to be true (at most 3600)."],
       ["--file <py|json>", null, "eval: the Python, from a file (at most 256 KiB); check-ui: the check, from a JSON file."],

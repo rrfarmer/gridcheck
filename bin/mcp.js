@@ -306,6 +306,7 @@ const CLI_ARGS = {
     flag("settings-profile", p.settingsProfile);
     flag("graphics", p.graphics);
     flag("no-console", p.noConsole);
+    flag("tutorial", p.tutorial);
     flag("wait", p.wait);
     args.push("--", "launch");
     return args;
@@ -905,6 +906,7 @@ const TOOLS = [
       settingsProfile: str("A client settings profile of its own, apart from a player's: 1 to 64 letters, digits, _ or -."),
       graphics: str("The renderer.", { enum: ["dx11", "dx12"] }),
       noConsole: bool("No console window: the client's output goes to a file under _local/gridcheck/client/, and a known startup failure is reported at once."),
+      tutorial: bool("Keep the character in the AIR tutorial (only for testing it). Otherwise launch leaves the tutorial as the client's Skip Tutorial does."),
       wait: int("Seconds to wait for the client to reach the game (default 240; 0 returns at once).", { minimum: 0, maximum: 600 }),
     }),
     run: simple("client_launch"),
