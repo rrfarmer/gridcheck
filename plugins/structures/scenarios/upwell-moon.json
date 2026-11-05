@@ -1,0 +1,129 @@
+{
+  "description": "[structures] Moon mining end to end by a real EVE client: a Gaze survey probe on Amamake moon 40161466 (OnMoonScanComplete must match the refinery's GetMoonResourcesForStructure), an Athanor deployed at that moon's mining beacon with a Moon Drill, StartNewExtraction, the scheduling window's GM 'ready' button (/extraction advance ready) with the chunk ball moving to the refinery in the client, the Fire button (FractureChunkWithStructure), a Retriever mining a rock of the field, and the ore refined in the Athanor through the reprocessing window's calls. Needs the client-agent patch and a moon composition pack in the server's game store.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "upwellmoon",
+        "name": "Upwell Moonminer",
+        "settingsProfile": "upwellmoon"
+      },
+      "note": "a pilot of its own on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "up_pilot_setup('Upwell Moon', 'UPMN', 60004603)",
+      "user": "upwellmoon",
+      "timeout": 200
+    },
+    {
+      "clientEval": "up_surveyor() and up_undock() and None",
+      "user": "upwellmoon",
+      "timeout": 200,
+      "note": "GM setup: Heron, Survey Probe Launcher II, Gaze probes"
+    },
+    {
+      "clientEval": "up_warp_to(40161466, 50000) and None",
+      "user": "upwellmoon",
+      "timeout": 200
+    },
+    {
+      "clientEval": "len(up_survey(40161466, 270000)) > 0",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 240,
+      "note": "OnMoonScanComplete with the moon's ores"
+    },
+    {
+      "clientEval": "agent.up_scan = sm.GetService('moonScan').GetScans().get(40161466); up_slash('/dock')",
+      "user": "upwellmoon",
+      "timeout": 60,
+      "note": "GM: back to a station"
+    },
+    {
+      "clientEval": "up_build_a(35835, 'Reg Moon Athanor', warp_to=1040161466) and None",
+      "user": "upwellmoon",
+      "timeout": 240,
+      "note": "the Athanor at the moon's mining beacon"
+    },
+    {
+      "clientEval": "up_build_b(100000) and None",
+      "user": "upwellmoon",
+      "timeout": 240
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 30
+    },
+    {
+      "clientEval": "up_control(agent.up_current['structureID']) and dict(up_moon_resources()) == dict(agent.up_scan)",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 60,
+      "note": "the refinery's moon ores are what the probe reported"
+    },
+    {
+      "clientEval": "up_start_extraction(agent.up_current['structureID'], 518460) is not None",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 60
+    },
+    {
+      "clientEval": "sm.GetService('slash').SlashCmd('/extraction advance ready'); up_sleep(4000); bp = up_bp(); [k for k in bp.slimItems if 7100000000000 < k < 7200000000000 and bp.DistanceBetween(agent.up_current['structureID'], k) < 200000] != []",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 60,
+      "note": "the chunk ball is beside the refinery in the client"
+    },
+    {
+      "clientEval": "sm.RemoteSvc('moonExtractions').FractureChunkWithStructure(); up_sleep(40000); len(up_field_rocks(agent.up_current['structureID'])) > 0",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 120,
+      "note": "fired: the chunk explodes into a field of rocks"
+    },
+    {
+      "clientEval": "up_release(); up_miner(); up_undock(); agent.up_rock = up_field_rocks(session.shipid)[0][1]; up_slash('/tr me %d' % agent.up_rock)",
+      "user": "upwellmoon",
+      "timeout": 200,
+      "note": "GM setup: Retriever with two Strip Miner I; GM move onto the field"
+    },
+    {
+      "clientEval": "len(up_mine(agent.up_rock, 190)) > 0",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 240,
+      "note": "ore in the hold"
+    },
+    {
+      "clientEval": "up_slash('/tr me %d' % agent.up_current['structureID']); up_sleep(4000); up_dock(agent.up_current['structureID'], 200000)",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 240
+    },
+    {
+      "clientEval": "[sm.GetService('invCache').GetInventoryFromId(session.structureid).Add(i.itemID, session.shipid, qty=i.stacksize, flag=const.flagHangar) for i in sm.GetService('invCache').GetInventoryFromId(session.shipid).List() if i.categoryID == 25]; up_sleep(3000); len(up_reprocess([t for t, n, q in up_ore_hold()] or [i.typeID for i in up_hangar_items() if i.categoryID == 25])['out']) > 0",
+      "user": "upwellmoon",
+      "assert": true,
+      "timeout": 120,
+      "note": "refined in the Athanor: minerals out"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=OnSessionChanged",
+      "note": "the client changed session (docked, undocked or moved); the clientEval asserts carry the checks"
+    }
+  ]
+}

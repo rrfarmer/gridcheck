@@ -65,6 +65,7 @@ test("the shipped plugins skip a tree without their mod, and name what is missin
   assert.deepEqual(loaded.skipped, [
     { name: "air", reason: "no AIR runtime in this tree (no server/src/services/npe/airNpeRuntime.js)" },
     { name: "lu", reason: "no Living Universe in this tree (no server/src/modApi.js)" },
+    { name: "structures", reason: "no Upwell structure runtime in this tree (no server/src/services/structure/structureState.js)" },
   ]);
 });
 
@@ -218,6 +219,7 @@ test("on a tree without Living Universe the lu plugin is skipped, and /grid and 
     skipped: [
       { name: "air", reason: "no AIR runtime in this tree (no server/src/services/npe/airNpeRuntime.js)" },
       { name: "lu", reason: "no Living Universe in this tree (no server/src/modApi.js)" },
+      { name: "structures", reason: "no Upwell structure runtime in this tree (no server/src/services/structure/structureState.js)" },
     ],
   });
   assert.equal(logger.lines.filter((line) => line.includes("plugin lu")).length, 1, logger.lines.join("\n"));

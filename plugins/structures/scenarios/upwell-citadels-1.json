@@ -1,0 +1,94 @@
+{
+  "description": "[structures] Upwell structures: Astrahus, Fortizar, Keepstar. Put up by a real EVE client the way a player does: the packaged hull carried in a Charon, deployed through the client's deploy window, anchor and onlining timers run down with the client's own GM structure menu command (/structure timer), docked, the quantum core put in the core room, every service the hull takes fitted and onlined, three rigs, 200,000 fuel blocks. Each must reach full power, take for each service exactly the fuel the client's dogma shows, show a fuel expiry in the structure browser and have stats equal to the type's static data. Lowsec Amamake; parts can run in any order. Needs the client-agent patch.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "upwellreg",
+        "name": "Upwell Regress",
+        "settingsProfile": "upwellreg"
+      },
+      "note": "a pilot on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwellreg",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "up_pilot_setup('Upwell Regress', 'UPRG', 60004603)",
+      "user": "upwellreg",
+      "timeout": 200,
+      "note": "GM setup: skills, ISK, Amamake; a player corp through the client's corp service"
+    },
+    {
+      "clientEval": "up_build_a(35832, 'Reg Astrahus') and None",
+      "user": "upwellreg",
+      "timeout": 300,
+      "note": "deploy Reg Astrahus from the hold, anchor timers via the client GM menu, dock"
+    },
+    {
+      "clientEval": "up_build_b(200000) and None",
+      "user": "upwellreg",
+      "timeout": 300,
+      "note": "core, onlining timer, every service, rigs, fuel, stats"
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwellreg",
+      "assert": true,
+      "timeout": 30,
+      "note": "Reg Astrahus at full power; fuel per service as the client's dogma; fuel expiry shown; stats as static data"
+    },
+    {
+      "clientEval": "up_build_a(35833, 'Reg Fortizar') and None",
+      "user": "upwellreg",
+      "timeout": 300,
+      "note": "deploy Reg Fortizar from the hold, anchor timers via the client GM menu, dock"
+    },
+    {
+      "clientEval": "up_build_b(200000) and None",
+      "user": "upwellreg",
+      "timeout": 300,
+      "note": "core, onlining timer, every service, rigs, fuel, stats"
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwellreg",
+      "assert": true,
+      "timeout": 30,
+      "note": "Reg Fortizar at full power; fuel per service as the client's dogma; fuel expiry shown; stats as static data"
+    },
+    {
+      "clientEval": "up_build_a(35834, 'Reg Keepstar') and None",
+      "user": "upwellreg",
+      "timeout": 300,
+      "note": "deploy Reg Keepstar from the hold, anchor timers via the client GM menu, dock"
+    },
+    {
+      "clientEval": "up_build_b(200000) and None",
+      "user": "upwellreg",
+      "timeout": 300,
+      "note": "core, onlining timer, every service, rigs, fuel, stats"
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwellreg",
+      "assert": true,
+      "timeout": 30,
+      "note": "Reg Keepstar at full power; fuel per service as the client's dogma; fuel expiry shown; stats as static data"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=OnSessionChanged",
+      "note": "the client changed session (docked, undocked or moved); the clientEval asserts carry the checks"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "description": "[structures] Running out of fuel, part 2 of 3: waits about 45 minutes while the last fuel burns. Run it again if the structure is not yet at low power, then upwell-fuelout-3.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "upwellfuel",
+        "name": "Upwell Fuelwatch",
+        "settingsProfile": "upwellfuel"
+      },
+      "note": "a pilot on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwellfuel",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "agent.up_fuelsid = up_find_structure('Fuel Test Astrahus') or [k for k, v in sm.RemoteSvc('structureDirectory').GetMyCorporationStructures().items() if v.itemName.endswith('Fuel Test Astrahus')][0]",
+      "user": "upwellfuel",
+      "timeout": 30
+    },
+    {
+      "repeat": [
+        {
+          "clientEval": "up_sleep(240000); up_info(agent.up_fuelsid).upkeepState",
+          "user": "upwellfuel",
+          "timeout": 270
+        }
+      ],
+      "every": 1,
+      "times": 9,
+      "note": "about 40 minutes for the hourly cycles to run the bay dry"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=OnSessionChanged",
+      "note": "the client changed session (docked, undocked or moved); the clientEval asserts carry the checks"
+    }
+  ]
+}

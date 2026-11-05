@@ -1,0 +1,147 @@
+{
+  "description": "[structures] War siege, part 2 of 2 (after upwell-siege-1): the attacker declares war through the client's war window (100M from the corp master wallet), starts it with the GM /war start (owner ruling), and shoots the defender's Fortizar with a sieged Revelation through shield, the armor timer (the client GM menu's /structure timer), armor, the hull timer and hull. Each layer is shot for real, a logged GM /upwell damage leaves 1% and real fire finishes it (owner's hybrid ruling). Checks each reinforce state, the defender's client ejected to space on the kill, its hangar in asset safety and the quantum core in a wreck on grid.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "upwelldef",
+        "name": "Upwell Defender",
+        "settingsProfile": "upwelldef"
+      },
+      "note": "a pilot on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwelldef",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientLaunch": {
+        "user": "upwellatk",
+        "name": "Upwell Attacker",
+        "settingsProfile": "upwellatk"
+      },
+      "note": "a pilot on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwellatk",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "agent.up_hq = [w.structureID for w in sm.RemoteSvc('structureDirectory').GetValidWarHQs(session.corpid)][0]",
+      "user": "upwellatk",
+      "timeout": 30,
+      "note": "the War HQ from part 1"
+    },
+    {
+      "clientEval": "up_dock(up_find_structure('Siege Target Fortizar'), 280000)",
+      "user": "upwelldef",
+      "assert": true,
+      "timeout": 290,
+      "note": "the defender stays docked in its Fortizar"
+    },
+    {
+      "clientEval": "up_dread() and None",
+      "user": "upwellatk",
+      "timeout": 290,
+      "note": "GM setup: the Revelation, docked in the War HQ"
+    },
+    {
+      "clientEval": "up_slash('/tr me 60004603'); up_sleep(15000); up_undock(); agent.up_target = up_find_structure('Siege Target Fortizar'); up_warp_to(agent.up_target, 0) < 50000",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 290,
+      "note": "GM move to Amamake, then warp to the target"
+    },
+    {
+      "clientEval": "agent.up_war = up_declare_war(int(up_slim(agent.up_target).ownerID), agent.up_hq)",
+      "user": "upwellatk",
+      "timeout": 60,
+      "note": "the war window's declare against the target's owner, with the War HQ; 100M from the master wallet"
+    },
+    {
+      "clientEval": "up_slash('/war start %d' % agent.up_war)",
+      "user": "upwellatk",
+      "timeout": 60,
+      "note": "GM: end the 24 h spool-up (owner ruling)"
+    },
+    {
+      "clientEval": "sm.GetService('crimewatchSvc').GetSafetyLevelRestrictionForAttackingTarget(agent.up_target) == 2",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 30,
+      "note": "a live war: attacking the defender's structure is allowed on green safety"
+    },
+    {
+      "clientEval": "r = up_shoot_layer(agent.up_target, 'shield'); r['moved'] and r['state'][0] == 111",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 300,
+      "note": "shield shot down: armor reinforce"
+    },
+    {
+      "clientEval": "up_timer(agent.up_target, 3); bool(up_wait(lambda: up_state(agent.up_target)[0] == 112, 30000, 1000))",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 60,
+      "note": "the client GM menu's timer: armor vulnerable"
+    },
+    {
+      "clientEval": "r = up_shoot_layer(agent.up_target, 'armor'); r['moved'] and r['state'][0] == 113",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 300,
+      "note": "armor shot down: hull reinforce"
+    },
+    {
+      "clientEval": "up_timer(agent.up_target, 3); bool(up_wait(lambda: up_state(agent.up_target)[0] == 114, 30000, 1000))",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 60
+    },
+    {
+      "clientEval": "r = up_shoot_layer(agent.up_target, 'hull'); r['moved'] and r['state'] is None",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 300,
+      "note": "hull shot down: the Fortizar dies"
+    },
+    {
+      "clientEval": "up_sleep(5000); session.structureid is None and up_bp() is not None and up_bp().GetBall(session.shipid) is not None",
+      "user": "upwelldef",
+      "assert": true,
+      "timeout": 60,
+      "note": "the defender's client was ejected into space"
+    },
+    {
+      "clientEval": "len(sm.RemoteSvc('structureAssetSafety').GetItemsInSafetyForCharacter()) > 0",
+      "user": "upwelldef",
+      "assert": true,
+      "timeout": 60,
+      "note": "the defender's hangar is in asset safety"
+    },
+    {
+      "clientEval": "bp = up_bp(); w = [k for k, v in bp.slimItems.items() if v.groupID == 186 and bp.DistanceBetween(session.shipid, k) < 100000]; agent.up_wreck = w[0] if w else None; bool(w) and 56204 in [i.typeID for i in sm.GetService('invCache').GetInventoryFromId(agent.up_wreck).List()]",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 60,
+      "note": "a wreck on grid with the quantum core in it"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=OnSessionChanged",
+      "note": "the client changed session (docked, undocked or moved); the clientEval asserts carry the checks"
+    }
+  ]
+}

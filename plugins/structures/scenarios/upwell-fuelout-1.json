@@ -1,0 +1,59 @@
+{
+  "description": "[structures] Running out of fuel, part 1 of 3: an Astrahus with three services online is left with 30 fuel blocks, the rest dragged out to the hangar. Run upwell-fuelout-2 next.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "upwellfuel",
+        "name": "Upwell Fuelwatch",
+        "settingsProfile": "upwellfuel"
+      },
+      "note": "a pilot on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwellfuel",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "up_pilot_setup('Upwell Fuelwatch', 'UPFW', 60004603)",
+      "user": "upwellfuel",
+      "timeout": 200
+    },
+    {
+      "clientEval": "up_build_a(35832, 'Fuel Test Astrahus') and None",
+      "user": "upwellfuel",
+      "timeout": 300
+    },
+    {
+      "clientEval": "up_build_b(3000) and None",
+      "user": "upwellfuel",
+      "timeout": 300
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwellfuel",
+      "assert": true,
+      "timeout": 30
+    },
+    {
+      "clientEval": "up_drain_fuel(agent.up_current['structureID'], 30) <= 30",
+      "user": "upwellfuel",
+      "assert": true,
+      "timeout": 60,
+      "note": "drag all but 30 blocks (about an hour) out of the fuel bay"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=OnSessionChanged",
+      "note": "the client changed session (docked, undocked or moved); the clientEval asserts carry the checks"
+    }
+  ]
+}

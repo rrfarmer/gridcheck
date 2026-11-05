@@ -1,0 +1,101 @@
+{
+  "description": "[structures] War siege, part 1 of 2: the defender (account upwelldef) puts up a Fortizar in lowsec Amamake with a hangar stack and a spare ship; the attacker (account upwellatk) makes its corporation and puts up an Astrahus War HQ in highsec Osoggur, which must be its valid War HQ. Run upwell-siege-2 next.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "upwelldef",
+        "name": "Upwell Defender",
+        "settingsProfile": "upwelldef"
+      }
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwelldef",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "up_pilot_setup('Upwell Defenders', 'UPDF', 60004603)",
+      "user": "upwelldef",
+      "timeout": 200
+    },
+    {
+      "clientEval": "up_build_a(35833, 'Siege Target Fortizar') and None",
+      "user": "upwelldef",
+      "timeout": 280
+    },
+    {
+      "clientEval": "up_build_b(100000) and None",
+      "user": "upwelldef",
+      "timeout": 280
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwelldef",
+      "assert": true,
+      "timeout": 30
+    },
+    {
+      "clientEval": "up_slash('/giveitem 34 1000'); up_slash('/ship Venture'); agent.up_current['structureID']",
+      "user": "upwelldef",
+      "timeout": 60,
+      "note": "GM: a hangar stack and a spare ship for asset safety"
+    },
+    {
+      "clientLaunch": {
+        "user": "upwellatk",
+        "name": "Upwell Attacker",
+        "settingsProfile": "upwellatk"
+      }
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "upwellatk",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": "up_attacker_setup('Upwell Besiegers', 'UPBS', 60005047)",
+      "user": "upwellatk",
+      "timeout": 200,
+      "note": "highsec Osoggur"
+    },
+    {
+      "clientEval": "up_build_a(35832, 'Siege War HQ') and None",
+      "user": "upwellatk",
+      "timeout": 280
+    },
+    {
+      "clientEval": "up_build_b(30000) and None",
+      "user": "upwellatk",
+      "timeout": 280
+    },
+    {
+      "clientEval": "up_built_ok()",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 30
+    },
+    {
+      "clientEval": "agent.up_hq = agent.up_current['structureID']; agent.up_hq in [w.structureID for w in sm.RemoteSvc('structureDirectory').GetValidWarHQs(session.corpid)]",
+      "user": "upwellatk",
+      "assert": true,
+      "timeout": 60,
+      "note": "the highsec Astrahus is a valid War HQ"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "CLIENT_EVENT event=OnSessionChanged",
+      "note": "the client changed session (docked, undocked or moved); the clientEval asserts carry the checks"
+    }
+  ]
+}
