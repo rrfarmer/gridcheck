@@ -186,8 +186,11 @@ def up_undock(tries=5):
 
 def up_move_away(km):
     # GM setup: moves the test ship to a fresh spot; structures need 1,000 km from each other
-    # and from celestials (structures/deployment.py CATEGORY_DISTANCES).
-    return up_slash('/tr me offset=%d,0,%d' % (km * 1000, km * 1000))
+    # and from celestials (structures/deployment.py CATEGORY_DISTANCES). A random heading keeps
+    # repeated runs from the same station off the spots earlier runs used.
+    import math, random
+    angle = random.uniform(0, 2 * math.pi)
+    return up_slash('/tr me offset=%d,0,%d' % (int(km * 1000 * math.cos(angle)), int(km * 1000 * math.sin(angle))))
 
 
 def up_deploy(typeID, name, weekday=4, hour=18):
@@ -427,14 +430,14 @@ def up_build_a(typeID, name, move_km=3000, warp_to=None):
         structureID = up_deploy(typeID, name)
     else:
         # A hop can land within 1,000 km of a structure an earlier run left; hop on.
-        for hop in range(4):
-            up_move_away(move_km)
+        for hop in range(6):
+            up_move_away(move_km * (hop + 1))
             up_sleep(4000)
             try:
                 structureID = up_deploy(typeID, name)
                 break
             except RuntimeError as e:
-                if hop == 3 or 'no free spot' not in str(e):
+                if hop == 5 or 'no free spot' not in str(e):
                     raise
                 up_log('hop again', typeID, str(e))
     path = up_walk(structureID, until=(102, 110))
