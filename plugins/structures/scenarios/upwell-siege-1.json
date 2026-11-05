@@ -1,5 +1,5 @@
 {
-  "description": "[structures] War siege, part 1 of 2: the defender (account upwelldef) puts up a Fortizar in lowsec Amamake with a hangar stack and a spare ship; the attacker (account upwellatk) makes its corporation and puts up an Astrahus War HQ in highsec Osoggur, which must be its valid War HQ. Run upwell-siege-2 next.",
+  "description": "War siege, part 1 of 2: the defender (account upwelldef) puts up a Fortizar in lowsec Amamake with a hangar stack and a spare ship; the attacker (account upwellatk) makes its corporation and puts up an Astrahus War HQ in highsec Osoggur, which must be its valid War HQ. Run upwell-siege-2 next.",
   "world": "fresh",
   "setup": [
     {

@@ -1,5 +1,5 @@
 {
-  "description": "[structures] Running out of fuel, part 2 of 3: waits about 45 minutes while the last fuel burns. Run it again if the structure is not yet at low power, then upwell-fuelout-3.",
+  "description": "Running out of fuel, part 2 of 3: waits about 45 minutes while the last fuel burns. Run it again if the structure is not yet at low power, then upwell-fuelout-3.",
   "world": "fresh",
   "setup": [
     {

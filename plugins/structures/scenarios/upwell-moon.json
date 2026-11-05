@@ -1,5 +1,5 @@
 {
-  "description": "[structures] Moon mining end to end by a real EVE client: a Gaze survey probe on Amamake moon 40161466 (OnMoonScanComplete must match the refinery's GetMoonResourcesForStructure), an Athanor deployed at that moon's mining beacon with a Moon Drill, StartNewExtraction, the scheduling window's GM 'ready' button (/extraction advance ready) with the chunk ball moving to the refinery in the client, the Fire button (FractureChunkWithStructure), a Retriever mining a rock of the field, and the ore refined in the Athanor through the reprocessing window's calls. Needs the client-agent patch and a moon composition pack in the server's game store.",
+  "description": "Moon mining end to end by a real EVE client: a Gaze survey probe on Amamake moon 40161466 (OnMoonScanComplete must match the refinery's GetMoonResourcesForStructure), an Athanor deployed at that moon's mining beacon with a Moon Drill, StartNewExtraction, the scheduling window's GM 'ready' button (/extraction advance ready) with the chunk ball moving to the refinery in the client, the Fire button (FractureChunkWithStructure), a Retriever mining a rock of the field, and the ore refined in the Athanor through the reprocessing window's calls. Needs the client-agent patch and a moon composition pack in the server's game store.",
   "world": "fresh",
   "setup": [
     {

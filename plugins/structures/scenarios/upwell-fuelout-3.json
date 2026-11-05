@@ -1,5 +1,5 @@
 {
-  "description": "[structures] Running out of fuel, part 3 of 3: the Astrahus is at low power with no fuel expiry, the owner has the low-fuel alert (181), services offline (198) and went-low-power (207) notifications, and the client GM menu's /structure abandontimer takes it to abandoned (upkeep 3).",
+  "description": "Running out of fuel, part 3 of 3: the Astrahus is at low power with no fuel expiry, the owner has the low-fuel alert (181), services offline (198) and went-low-power (207) notifications, and the client GM menu's /structure abandontimer takes it to abandoned (upkeep 3).",
   "world": "fresh",
   "setup": [
     {

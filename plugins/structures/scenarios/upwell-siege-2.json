@@ -1,5 +1,5 @@
 {
-  "description": "[structures] War siege, part 2 of 2 (after upwell-siege-1): the attacker declares war through the client's war window (100M from the corp master wallet), starts it with the GM /war start (owner ruling), and shoots the defender's Fortizar with a sieged Revelation through shield, the armor timer (the client GM menu's /structure timer), armor, the hull timer and hull. Each layer is shot for real, a logged GM /upwell damage leaves 1% and real fire finishes it (owner's hybrid ruling). Checks each reinforce state, the defender's client ejected to space on the kill, its hangar in asset safety and the quantum core in a wreck on grid.",
+  "description": "War siege, part 2 of 2 (after upwell-siege-1): the attacker declares war through the client's war window (100M from the corp master wallet), starts it with the GM /war start (owner ruling), and shoots the defender's Fortizar with a sieged Revelation through shield, the armor timer (the client GM menu's /structure timer), armor, the hull timer and hull. Each layer is shot for real, a logged GM /upwell damage leaves 1% and real fire finishes it (owner's hybrid ruling). Checks each reinforce state, the defender's client ejected to space on the kill, its hangar in asset safety and the quantum core in a wreck on grid.",
   "world": "fresh",
   "setup": [
     {

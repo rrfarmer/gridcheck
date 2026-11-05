@@ -1,5 +1,5 @@
 {
-  "description": "[structures] Running out of fuel, part 1 of 3: an Astrahus with three services online is left with 30 fuel blocks, the rest dragged out to the hangar. Run upwell-fuelout-2 next.",
+  "description": "Running out of fuel, part 1 of 3: an Astrahus with three services online is left with 30 fuel blocks, the rest dragged out to the hangar. Run upwell-fuelout-2 next.",
   "world": "fresh",
   "setup": [
     {
