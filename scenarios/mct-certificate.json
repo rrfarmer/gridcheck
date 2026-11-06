@@ -1,0 +1,19 @@
+{
+  "description": "Multiple Character Training in a real EVE client: a Multiple Pilot Training Certificate offers Activate; with no extra queue the dialog shows both queues not active (the second Activate disabled); Activate then Confirm opens queue 2 for 30 days and spends one certificate; Extend adds 30 days to it; the second row opens queue 3. Slots are read from the client's own skill queue service. Needs the client-agent patch; each run needs an account without MCT (change clientLaunch.user to rerun on the same server). Driver: mct/mct.py.",
+  "world": "fresh",
+  "watch": { "screenshots": ["stop"] },
+  "setup": [
+    { "clientLaunch": { "user": "mctcheck", "name": "MCT Checker" } },
+    { "clientEval": { "file": "mct/mct.py" }, "timeout": 30, "note": "loads the driver" },
+    { "clientEval": "mct_step_setup()", "assert": true, "timeout": 90, "note": "docked, no MCT yet, three certificates in the hangar, Activate offered" },
+    { "clientEval": "mct_step_dialog_empty()", "assert": true, "timeout": 60, "note": "both queues not active, the second Activate disabled, 30 days" },
+    { "clientEval": "mct_step_activate()", "assert": true, "timeout": 60, "note": "Activate + Confirm: queue 2 runs 30 days, one certificate spent" },
+    { "clientEval": "mct_step_extend()", "assert": true, "timeout": 60, "note": "Extend: queue 2 runs 60 days" },
+    { "clientEval": "mct_step_second_queue()", "assert": true, "timeout": 60, "note": "the second row opens queue 3 for 30 days" }
+  ],
+  "until": { "any": ["CLIENT_EXCEPTION"], "timeout": 5, "grace": 2 },
+  "expect": [
+    { "match": "no CLIENT_EXCEPTION where~activateMultiTraining", "note": "the activation dialog raised nothing" },
+    { "match": "no CLIENT_EXCEPTION where~skillQueueSvc", "note": "nor did the skill queue service refreshing its slots" }
+  ]
+}
