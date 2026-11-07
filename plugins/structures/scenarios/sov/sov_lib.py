@@ -144,17 +144,21 @@ def sov_system_info(solarSystemID=None):
     return out
 
 
-def sov_notifications(typeIDs=None):
-    # The notification list the client's notification window reads.
-    try:
-        rows = sm.GetService('notificationSvc').GetFormattedNotifications() or []
-    except Exception:
-        rows = []
+def sov_notifications(typeIDs=None, groupIDs=range(1, 40)):
+    # The notification window's lists: notificationSvc.GetFormattedNotifications(groupID), one
+    # group at a time (sov notices are in group 6).
+    svc = sm.GetService('notificationSvc')
     out = []
-    for n in rows:
-        t = getattr(n, 'typeID', None)
-        if typeIDs is None or t in typeIDs:
-            out.append((getattr(n, 'notificationID', None), t, getattr(n, 'subject', None)))
+    for g in groupIDs:
+        try:
+            rows = svc.GetFormattedNotifications(g) or []
+        except Exception:
+            continue
+        for n in rows:
+            t = getattr(n, 'typeID', None)
+            if typeIDs is None or t in typeIDs:
+                out.append((getattr(n, 'notificationID', None), t, getattr(n, 'subject', None),
+                            getattr(n, 'body', None)))
     return out
 
 
@@ -319,3 +323,71 @@ def sov_check_cleanup(result, convertID, destroyID):
     assert result['owners'][destroyID] is None, result
     assert not set([convertID, destroyID]) & set(result['left']), result
     return True
+
+
+def sov_hub_uninstall(hubID, typeID):
+    # The Hub window's remove button: hubController.DeleteUpgrade asks ConfirmDestroyUpgrade
+    # ("...remove the Upgrade from the Sovereignty Hub and destroy it") and calls
+    # sovHubSvc.UninstallUpgrade. Answers what the Hub then lists and the cargo.
+    ctrl = sov_hub_window(hubID)
+    up = [u for u in ctrl.installedUpgradesSimulated if u.typeID == typeID][0]
+    uthread.new(ctrl.DeleteUpgrade, typeID, up.upgradeKey, None)
+    sov_answer_yes()
+    up_sleep(5000)
+    return dict(upgrades=sov_hub_upgrades(hubID), cargo=[(i.typeID, i.stacksize) for i in up_cargo()])
+
+
+def sov_menu_offers(itemID):
+    from menucheckers.celestialCheckers import CelestialChecker
+    from menucheckers.sessionChecker import SessionChecker
+    cc = CelestialChecker(up_bp().slimItems[itemID], cfg, SessionChecker(session, sm))
+    return dict(selfDestruct=cc.OfferSelfDestructShipOrPod(), abort=cc.OfferAbortSelfDestructStructure())
+
+
+def sov_self_destruct(hubID, abort=False):
+    # The space menu's Self-Destruct / Abort Self-Destruct (menuFunctions.SelfDestructStructure,
+    # AbortSelfDestructStructure), each with its confirmation. Answers the slim deadline.
+    from eve.client.script.ui.services.menuSvcExtras import menuFunctions
+    fn = menuFunctions.AbortSelfDestructStructure if abort else menuFunctions.SelfDestructStructure
+    uthread.new(fn, hubID)
+    sov_answer_yes()
+    up_sleep(4000)
+    return getattr(up_bp().slimItems[hubID], 'selfDestructTime', None)
+
+
+def sov_pi_colony(planetID, ccTypeID, padTypeID, level=3):
+    # The planet view's build-and-submit: a command center from cargo, its upgrade, a launchpad
+    # and a link (clientPlanet.CreatePin / UpgradeCommandCenter / CreateLink / SubmitChanges).
+    planet = sm.GetService('planetSvc').GetPlanet(planetID)
+    cc = planet.CreatePin(ccTypeID, 0.6, 0.6)
+    planet.UpgradeCommandCenter(cc.id, level)
+    pad = planet.CreatePin(padTypeID, 0.62, 0.61)
+    planet.CreateLink(cc.id, pad.id, list(evetypes.GetTypeIDsByGroup(const.groupPlanetaryLinks))[0])
+    planet.SubmitChanges()
+    up_sleep(3000)
+    planet = sm.GetService('planetSvc').GetPlanet(planetID)
+    return [p.id for p in planet.GetColony(session.charid).colonyData.pins.values() if p.typeID == padTypeID][0]
+
+
+def sov_pi_transfer(orbitalID, padID, importTypeID=None, importQty=0, exportTypeID=None, exportQty=0):
+    # The import/export window's Transfer: cargo into the orbital's bay first (its drag-and-drop),
+    # then ImportExportWithPlanet at the registry's current tax. Answers what the pilot paid and
+    # what the owner's corporation gained (the caller should belong to it to read that).
+    import eve.common.script.net.eveMoniker as eveMoniker
+    inv = sm.GetService('invCache').GetInventoryFromId(orbitalID)
+    imports = {}
+    if importTypeID:
+        src = [i for i in up_cargo() if i.typeID == importTypeID][0]
+        inv.Add(src.itemID, session.shipid, qty=importQty)
+        up_sleep(3000)
+        imports = {[i for i in inv.List() if i.typeID == importTypeID][0].itemID: importQty}
+    exports = {exportTypeID: exportQty} if exportTypeID else {}
+    tax = eveMoniker.GetPlanetOrbitalRegistry(session.solarsystemid).GetTaxRate(orbitalID)
+    pad = sm.GetService('planetSvc').GetPlanet(up_bp().slimItems[orbitalID].planetID).GetPin(padID)
+    expected = pad.GetImportTax({importTypeID: importQty} if importTypeID else {}, tax) +         pad.GetExportTax(exports, tax)
+    c0 = sov_corp_balance()
+    w0 = sm.GetService('wallet').GetWealth()
+    inv.ImportExportWithPlanet(padID, imports, exports, tax)
+    up_sleep(4000)
+    return dict(tax=tax, expected=expected, paid=w0 - sm.GetService('wallet').GetWealth(),
+                ownerGain=sov_corp_balance() - c0)
