@@ -1,0 +1,83 @@
+{
+  "description": "Sovereignty Hub cleanup window after a claim (manifest D07). Needs a world where Sov Attacker (account sovatk, a Director of its corporation) claimed WUZ-WM under 24 hours ago and the old owner's Orbital Skyhooks are still there, as the Phase 10 siege leaves it. Through the window's own calls (cleanupWndController.ProcessSkyhooks): with an empty corp wallet a conversion is refused with NotEnoughMoney; after a 1B ISK deposit the first listed skyhook converts for 200M and the second is destroyed; the converted one shows the attacker's corp and alliance, the destroyed one leaves the ballpark and both leave the cleanup list.",
+  "world": "fresh",
+  "setup": [
+    {
+      "clientLaunch": {
+        "user": "sovatk",
+        "name": "Sov Attacker",
+        "settingsProfile": "sovatk"
+      },
+      "note": "the claiming Director on its own account"
+    },
+    {
+      "clientEval": {
+        "file": "upwell/upwell_lib.py"
+      },
+      "user": "sovatk",
+      "timeout": 60,
+      "note": "loads the Upwell driver"
+    },
+    {
+      "clientEval": {
+        "file": "sov/sov_lib.py"
+      },
+      "user": "sovatk",
+      "timeout": 60,
+      "note": "loads the sov driver"
+    },
+    {
+      "clientEval": "sm.GetService('sov').CanCleanUpSystem() and len(sov_cleanup_candidates()) >= 2",
+      "user": "sovatk",
+      "assert": true,
+      "timeout": 30,
+      "note": "the window's own gate: a claim under 24 h old and at least two foreign skyhooks"
+    },
+    {
+      "clientEval": "agent.sov_pick = [c[0] for c in sov_cleanup_candidates()][:2]; agent.sov_pick",
+      "user": "sovatk",
+      "timeout": 30,
+      "note": "the first two skyhooks the window lists"
+    },
+    {
+      "clientEval": "sov_corp_balance() >= 200000000 or sov_cleanup([agent.sov_pick[0]], [])['error'][0] == 'NotEnoughMoney'",
+      "user": "sovatk",
+      "assert": true,
+      "timeout": 60,
+      "note": "with less than the fee in the wallet, conversion is refused with NotEnoughMoney"
+    },
+    {
+      "clientEval": "sov_corp_deposit(1000000000) >= 200000000",
+      "user": "sovatk",
+      "assert": true,
+      "timeout": 60,
+      "note": "the wallet's Give ISK to the corporation (the fee comes from the master wallet)"
+    },
+    {
+      "clientEval": "agent.sov_result = sov_cleanup([agent.sov_pick[0]], [agent.sov_pick[1]]); agent.sov_result",
+      "user": "sovatk",
+      "timeout": 90,
+      "note": "convert the first, destroy the second"
+    },
+    {
+      "clientEval": "sov_check_cleanup(agent.sov_result, agent.sov_pick[0], agent.sov_pick[1])",
+      "user": "sovatk",
+      "assert": true,
+      "timeout": 30,
+      "note": "one converted to the attacker for 200M, one gone from the ballpark, neither still listed"
+    }
+  ],
+  "until": {
+    "timeout": 30
+  },
+  "expect": [
+    {
+      "match": "no CLIENT_EXCEPTION where~sovSvc",
+      "note": "the cleanup calls raise nothing in the client"
+    },
+    {
+      "match": "no CLIENT_EXCEPTION where~skyhooksCleanup",
+      "note": "nor in the cleanup window code"
+    }
+  ]
+}

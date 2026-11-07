@@ -1,0 +1,321 @@
+# Sovereignty driver, loaded into the client agent's namespace after upwell/upwell_lib.py by the
+# sov scenarios. Every player action goes through the client's own services: LaunchFromShip (the
+# cargo menu's "Launch for Self", spacecomponents/client/components/deploy.py:55), the HUD module
+# buttons (entosis), sovSvc / sovHubSvc / sovereigntyResourceSvc (what the sov windows read), the
+# skyhook and mercenary den space components. GM slash commands are used only for setup (skills,
+# ISK, items, moving the test ship between highsec and null) and to skip timers (owner ruling
+# 2026-11-06: hybrid time control, as for the Keepstar siege on 2026-11-05).
+import blue, uthread, evetypes
+
+SOV_HUB = 32458
+SOV_SKYHOOK = 81080
+SOV_SILO = 81933
+SOV_DEN = 85230
+SOV_GANTRY = 3962
+SOV_ENTOSIS_T1 = 34593
+SOV_ENTOSIS_T2 = 34595
+SOV_STRONTIUM = 16275
+SOV_GAS = 81143
+SOV_ICE = 81144
+SOV_NODE = 34832
+# Test systems (doc/SOV_CLIENT_CHECK_MANIFEST.md, phase 0): Deklein constellation 20000431.
+SOV_MAIN = 30002939      # WUZ-WM: every planet type
+SOV_SECOND = 30002945    # 4N-BUI: next to WUZ-WM, for workforce transit
+SOV_FAR = 30002947       # GY5-26: two jumps from WUZ-WM, for raid alerts
+SOV_STAR = {30002939: 40186554, 30002945: 40187002, 30002947: 40187083}
+SOV_HOME = 60003760      # Jita IV - Moon 4 - Caldari Navy Assembly Plant: ships are made here
+
+
+def sov_log(*args):
+    up_log('sov', *args)
+
+
+def sov_bp_items(typeID):
+    bp = up_bp()
+    if not bp:
+        return []
+    return [k for k, v in bp.slimItems.items() if v.typeID == typeID]
+
+
+def sov_alliance(name, short):
+    # The Alliances window's Create Alliance form (all_ui_home.CreateAllianceForm) calls
+    # corp.CreateAlliance. Safe to run again.
+    if session.allianceid:
+        return session.allianceid
+    sm.GetService('corp').CreateAlliance(name, short, 'client check', '')
+    up_wait(lambda: session.allianceid, 60000, 1000)
+    return session.allianceid
+
+
+def sov_setup(corpName, ticker, allianceName, allianceShort):
+    up_pilot_setup(corpName, ticker, SOV_HOME)
+    return (session.corpid, sov_alliance(allianceName, allianceShort))
+
+
+def sov_go(destID, wait_ms=60000):
+    # GM setup move: /tr me <system, celestial or station>.
+    before = session.solarsystemid2
+    up_slash('/tr me %d' % destID)
+    up_wait(lambda: up_bp() and session.solarsystemid2 and session.shipid in up_bp().balls, wait_ms, 1000)
+    up_sleep(8000)
+    return (before, session.solarsystemid2)
+
+
+def sov_home():
+    if session.stationid == SOV_HOME:
+        return session.stationid
+    up_slash('/tr me %d' % SOV_HOME)
+    up_wait(lambda: session.stationid == SOV_HOME, 60000, 1000)
+    up_sleep(12000)
+    return session.stationid
+
+
+def sov_load(typeID, qty):
+    # GM setup: items into the hangar, then dragged into the ship's cargo.
+    up_hangar_give(typeID, qty)
+    up_sleep(2000)
+    item = up_wait(lambda: [i for i in up_hangar_items(typeID)], 10000)[0]
+    sm.GetService('invCache').GetInventoryFromId(session.shipid).Add(item.itemID, item.locationID, qty=item.stacksize, flag=const.flagCargo)
+    return up_wait(lambda: [i for i in up_cargo() if i.typeID == typeID], 10000)[0].itemID
+
+
+def sov_launch(typeID, timeout_ms=30000):
+    # The cargo menu's "Launch for Self" / "Launch for Corporation": for a type with a deploy
+    # component both call LaunchFromShip([item], maxQty=1) with no owner (menusvc.py:344-354).
+    from eve.client.script.util.eveMisc import LaunchFromShip
+    item = [i for i in up_cargo() if i.typeID == typeID][0]
+    before = set(sov_bp_items(typeID))
+    LaunchFromShip([item], maxQty=1)
+    new = up_wait(lambda: [k for k in sov_bp_items(typeID) if k not in before], timeout_ms)
+    sov_log('launched', typeID, new)
+    return new[0] if new else None
+
+
+def sov_entosis_ship(hull='Vexor', hullTypeID=626, tier=SOV_ENTOSIS_T2):
+    # GM setup at home: a cruiser with an Entosis Link and strontium.
+    sov_home()
+    up_board_ship(hull, hullTypeID)
+    up_slash('/fit me %d' % tier)
+    up_sleep(2000)
+    sov_load(SOV_STRONTIUM, 100)  # a Vexor holds 480 m3
+    return session.shipid
+
+
+def sov_entosis(targetID, typeID=None):
+    # Lock the target and press the Entosis Link's HUD button, as a pilot does.
+    ts = sm.GetService('target')
+    if targetID not in ts.GetTargets():
+        uthread.new(ts.TryLockTarget, targetID)
+        up_wait(lambda: targetID in ts.GetTargets(), 60000)
+    buttons = up_hud_buttons([typeID] if typeID else [SOV_ENTOSIS_T1, SOV_ENTOSIS_T2])
+    for b in buttons:
+        if not b.def_effect.isActive:
+            uthread.new(b.ActivateModule)
+    up_sleep(3000)
+    return [(b.moduleinfo.itemID, b.def_effect.isActive) for b in buttons]
+
+
+def sov_entosis_stop():
+    for b in up_hud_buttons([SOV_ENTOSIS_T1, SOV_ENTOSIS_T2]):
+        if b.def_effect.isActive:
+            uthread.new(b.DeactivateModule)
+    up_sleep(2000)
+
+
+def sov_score(itemID):
+    s = up_slim(itemID)
+    return s and getattr(s, 'entosis_score', None)
+
+
+def sov_system_info(solarSystemID=None):
+    # What the info panel and the Sovereignty tab read (sovSvc).
+    sid = solarSystemID or session.solarsystemid2
+    svc = sm.GetService('sov')
+    out = {}
+    try:
+        info = svc.GetSystemSovereigntyInfo(sid)
+        out['owner'] = info and (getattr(info, 'allianceID', None), getattr(info, 'corporationID', None))
+    except Exception as e:
+        out['ownerErr'] = repr(e)
+    try:
+        out['hub'] = svc.GetInfrastructureHubInfo(sid)
+    except Exception as e:
+        out['hubErr'] = repr(e)
+    return out
+
+
+def sov_notifications(typeIDs=None):
+    # The notification list the client's notification window reads.
+    try:
+        rows = sm.GetService('notificationSvc').GetFormattedNotifications() or []
+    except Exception:
+        rows = []
+    out = []
+    for n in rows:
+        t = getattr(n, 'typeID', None)
+        if typeIDs is None or t in typeIDs:
+            out.append((getattr(n, 'notificationID', None), t, getattr(n, 'subject', None)))
+    return out
+
+
+def sov_hub_window(hubID):
+    # The Hub configuration window (openFunctions.py:181 OpenSovHubWnd) and its controller.
+    from eve.client.script.ui.shared.sov.sovHub.sovHubWnd import OpenSovHubWnd
+    OpenSovHubWnd(hubID, session.solarsystemid2)
+    wnd = up_wait(lambda: [w for w in uicore.registry.GetWindows() if w.__class__.__name__ == 'SovHubWnd'], 20000)
+    wnd = wnd[0]
+    up_wait(lambda: getattr(wnd, 'hubController', None) and wnd.hubController.installedUpgradesSimulated is not None, 20000)
+    return wnd.hubController
+
+
+class _SovDragItem(object):
+    # What a cargo item dragged into the window carries (listentry.InvItem: invtype and rec).
+    __guid__ = 'listentry.InvItem'
+
+    def __init__(self, rec):
+        self.rec = rec
+        self.invtype = rec.typeID
+
+
+def sov_hub_drop(ctrl, typeIDs):
+    # Drag each cargo item of these types into the window: the controller's own DoDropData,
+    # which refuses with GetDropError's text (hubController.py:176) the way the player sees it.
+    errors = {}
+    for typeID in typeIDs:
+        rec = [i for i in up_cargo() if i.typeID == typeID][0]
+        data = _SovDragItem(rec)
+        err = ctrl.GetDropError(data)
+        if err:
+            errors[typeID] = err
+            continue
+        ctrl.DoDropData(None, [data])
+    return errors
+
+
+def sov_hub_save(ctrl):
+    # SaveChanges without its confirmation dialog: the same SaveUpgradeConfiguration call
+    # (hubController.py:360-364), then the power states it compares.
+    newUpgrades = ctrl._newUpgrades.keys()
+    installed = [(u.typeID, u.isConfiguredOnline) for u in ctrl.installedUpgradesSimulated]
+    before = [(u.typeID, u.powerState) for u in ctrl.installedUpgradesSimulated]
+    res = sm.GetService('sovHubSvc').SaveUpgradeConfiguration(ctrl.itemID, newUpgrades, installed)
+    ctrl._newUpgrades.clear()
+    after = [(x.upgrade_type_id, x.power_state) for x in res]
+    return (before == after, before, after)
+
+
+def sov_hub_upgrades(hubID):
+    return [(x.upgrade_type_id, x.power_state, getattr(x, 'is_power_offline', None))
+            for x in sm.GetService('sovHubSvc').GetInstalledUpgradesForHub(hubID)]
+
+
+def sov_orbital_state(itemID):
+    s = up_slim(itemID)
+    if s is None:
+        return None
+    return dict(orbitalState=getattr(s, 'orbitalState', None), orbitalTimestamp=getattr(s, 'orbitalTimestamp', None),
+                skyhook_state=getattr(s, 'skyhook_state', None), skyhook_timer=getattr(s, 'skyhook_timer', None),
+                skyhook_damage=getattr(s, 'skyhook_damage', None), damage=up_bp().GetDamageState(itemID))
+
+
+def sov_shoot_orbital(itemID, shield, armor=1.0, hull=1.0, real_seconds=40):
+    # The hybrid rule (owner, 2026-11-06): a logged GM /sov orbital damage leaves the orbital
+    # just above the threshold, then real fire from the Revelation (up_dread) crosses it.
+    up_slash('/sov orbital %d damage %s %s %s' % (itemID, shield, armor, hull))
+    up_sleep(3000)
+    before = sov_orbital_state(itemID)
+    up_strontium(300)
+    up_attack(itemID, 37298, 4292)
+    up_sleep(real_seconds * 1000)
+    return (before, sov_orbital_state(itemID))
+
+
+def sov_answer_yes():
+    # Answer the open yes/no MessageBox the way its Yes button does (client_click cannot press
+    # MessageBox buttons).
+    from carbonui import uiconst
+    m = up_wait(lambda: uicore.registry.GetModalWindow(), 20000)
+    m.SetModalResult(uiconst.ID_YES)
+    return True
+
+
+def sov_board_flex(structureID):
+    # structureControl.BoardStructure (the space menu's Board Structure): asks BoardingFlexStructure
+    # first when leaving a ship in space.
+    uthread.new(sm.GetService('structureControl').BoardStructure, structureID)
+    sov_answer_yes()
+    return up_wait(lambda: session.shipid == structureID, 60000) and session.shipid
+
+
+def sov_flex_modules(structureID):
+    # What the fitting window reads: the client's own dogma location.
+    dl = sm.GetService('clientDogmaIM').GetDogmaLocation()
+    ship = dl.SafeGetDogmaItem(structureID)
+    out = []
+    for k, v in (ship.GetFittedItems().items() if ship else []):
+        if v.flagID >= 164:
+            out.append((k, v.typeID, v.flagID, dl.SafeGetDogmaItem(k).IsOnline()))
+    return out
+
+
+def sov_online_module(moduleID):
+    # The fitting window's Put Online: clientDogmaLocation.OnlineModule. Answers the module's
+    # online flag and any message the server sent back.
+    dl = sm.GetService('clientDogmaIM').GetDogmaLocation()
+    try:
+        dl.OnlineModule(moduleID)
+    except UserError as e:
+        return (False, e.msg, e.dict)
+    up_wait(lambda: dl.SafeGetDogmaItem(moduleID).IsOnline(), 20000)
+    return (dl.SafeGetDogmaItem(moduleID).IsOnline(), None, None)
+
+
+def sov_board_previous():
+    sc = sm.GetService('structureControl')
+    shipID = sc.GetOldShipInfo()[0]
+    uthread.new(sc.BoardPreviousShip)
+    return up_wait(lambda: session.shipid == shipID and not session.structureid, 60000) and session.shipid
+
+
+def sov_corp_balance(accountKey=1000):
+    return [d.balance for d in sm.RemoteSvc('account').GetWalletDivisionsInfo() if d.key == accountKey][0]
+
+
+def sov_corp_deposit(amount, accountKey=1000):
+    # The wallet's Give ISK to the own corporation (transferMoneyWnd.py:148).
+    sm.RemoteSvc('account').GiveCash(session.corpid, float(amount), 'client check', toAccountKey=accountKey)
+    return sov_corp_balance(accountKey)
+
+
+def sov_cleanup_candidates():
+    # What the system cleanup window lists (sovSvc.GetStructuresAvailableToCleanUp).
+    return [(i.itemID, i.ownerID, i.allianceID) for i in sm.GetService('sov').GetStructuresAvailableToCleanUp()]
+
+
+def sov_cleanup(acquireIDs, destroyIDs, accessListID=None):
+    # cleanupWndController.ProcessSkyhooks: AcquireSkyhooks then DestroySkyhooks; each answers the
+    # IDs it processed. Then what the ballpark shows for each and the corp wallet.
+    sov = sm.GetService('sov')
+    before = sov_corp_balance()
+    try:
+        acquired = sov.AcquireSkyhooks(list(acquireIDs), accessListID)
+    except UserError as e:
+        return dict(error=(e.msg, e.dict), balance=before)
+    destroyed = sov.DestroySkyhooks(list(destroyIDs))
+    up_sleep(3000)
+    bp = up_bp()
+    owners = dict((i, (bp.GetInvItem(i).ownerID, bp.GetInvItem(i).allianceID) if bp.GetInvItem(i) else None)
+                  for i in list(acquireIDs) + list(destroyIDs))
+    return dict(acquired=list(acquired), destroyed=list(destroyed), owners=owners,
+                paid=before - sov_corp_balance(), left=[c[0] for c in sov_cleanup_candidates()])
+
+
+def sov_check_cleanup(result, convertID, destroyID):
+    # One converted to the caller for 200M, one gone from the ballpark, neither still listed.
+    assert result.get('acquired') == [convertID], result
+    assert result.get('destroyed') == [destroyID], result
+    assert result.get('paid') == 200000000, result
+    assert result['owners'][convertID] == (session.corpid, session.allianceid), result
+    assert result['owners'][destroyID] is None, result
+    assert not set([convertID, destroyID]) & set(result['left']), result
+    return True
