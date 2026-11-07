@@ -20,7 +20,8 @@ SOV_ICE = 81144
 SOV_NODE = 34832
 # Test systems (doc/SOV_CLIENT_CHECK_MANIFEST.md, phase 0): Deklein constellation 20000431.
 SOV_MAIN = 30002939      # WUZ-WM: every planet type
-SOV_SECOND = 30002945    # 4N-BUI: next to WUZ-WM, for workforce transit
+SOV_SECOND = 30002945    # N2IS-B: 2.05 ly from WUZ-WM, for workforce transit
+SOV_BRIDGE = 30002941    # 43B-O1: 0.57 ly from WUZ-WM, the Ansiblex pair
 SOV_FAR = 30002947       # GY5-26: two jumps from WUZ-WM, for raid alerts
 SOV_STAR = {30002939: 40186554, 30002945: 40187002, 30002947: 40187083}
 SOV_HOME = 60003760      # Jita IV - Moon 4 - Caldari Navy Assembly Plant: ships are made here
@@ -391,3 +392,39 @@ def sov_pi_transfer(orbitalID, padID, importTypeID=None, importQty=0, exportType
     up_sleep(4000)
     return dict(tax=tax, expected=expected, paid=w0 - sm.GetService('wallet').GetWealth(),
                 ownerGain=sov_corp_balance() - c0)
+
+
+def sov_hub_fuel(hubID, typeID, qty):
+    # The Hub's reagent bay deposit (reagentBay/controllers.py DoDepositItems): sovHubSvc.AddFuel
+    # per cargo stack.
+    rec = [i for i in up_cargo() if i.typeID == typeID][0]
+    sm.GetService('sovHubSvc').AddFuel(rec.itemID, qty, hubID)
+    up_sleep(3000)
+    return True
+
+
+def sov_hub_set_online(hubID, typeID, online):
+    # The Hub window's online toggle, then its save.
+    for w in [w for w in uicore.registry.GetWindows() if w.__class__.__name__ == 'SovHubWnd']:
+        w.Close()
+    ctrl = sov_hub_window(hubID)
+    ctrl.SetOnlineState(typeID, online)
+    return sov_hub_save(ctrl)
+
+
+def sov_ansiblex_jump(gateID):
+    # The space menu's Jump (menusvc.ReallyJumpThroughStructureJumpBridge:
+    # structureJumpBridgeMgr.CmdJumpThroughStructureStargate in a session change). GM /tr puts
+    # the ship on the gate first, since the bridge refuses beyond its activation range. Answers
+    # the systems before and after, or the refusal.
+    from eve.client.script.ui.services.menusvc import MenuSvc
+    up_slash('/tr me %d' % gateID)
+    up_sleep(8000)
+    before = session.solarsystemid2
+    try:
+        MenuSvc.ReallyJumpThroughStructureJumpBridge(gateID)
+    except UserError as e:
+        return dict(before=before, after=session.solarsystemid2, error=(e.msg, e.dict))
+    up_wait(lambda: session.solarsystemid2 != before, 60000, 1000)
+    up_sleep(5000)
+    return dict(before=before, after=session.solarsystemid2, error=None)

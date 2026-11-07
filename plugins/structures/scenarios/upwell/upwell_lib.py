@@ -193,7 +193,7 @@ def up_move_away(km):
     return up_slash('/tr me offset=%d,0,%d' % (int(km * 1000 * math.cos(angle)), int(km * 1000 * math.sin(angle))))
 
 
-def up_deploy(typeID, name, weekday=4, hour=18):
+def up_deploy(typeID, name, weekday=4, hour=18, extra=None):
     # The deploy window (structureDeployment.Deploy), its placement entity moved out along -x
     # until the client's own FindDeploymentConflict reports no conflict, then ConfirmDeployment,
     # which sends structureDeployment.Anchor(...).
@@ -226,7 +226,16 @@ def up_deploy(typeID, name, weekday=4, hour=18):
         sd.CancelDeployment()
         raise RuntimeError('no free spot to deploy %s: %r' % (typeID, conflict))
     before = set(k for k, v in up_bp().slimItems.items() if v.categoryID == const.categoryStructure)
-    sd.ConfirmDeployment(weekday, hour, None, name, 'client check')
+    # extra: the deploy window's extra variables, e.g. an Ansiblex's
+    # {'destinationSolarsystemID': ...} (ConfirmDeployment passes it as extraConfig).
+    try:
+        sd.ConfirmDeployment(weekday, hour, None, name, 'client check', extra or {})
+    except TypeError:
+        # For an Ansiblex the client's first ConfirmDeployment can raise "'int' object is not
+        # subscriptable" inside structureDeployment.py (seen 2026-11-07, both gates); the same
+        # call then succeeds.
+        up_sleep(1000)
+        sd.ConfirmDeployment(weekday, hour, None, name, 'client check', extra or {})
     new = up_wait(lambda: [k for k, v in up_bp().slimItems.items() if v.categoryID == const.categoryStructure and k not in before], 20000)
     structureID = new[0]
     up_log('deployed', typeID, structureID, up_state(structureID))
