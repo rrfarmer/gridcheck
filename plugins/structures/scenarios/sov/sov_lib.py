@@ -428,3 +428,56 @@ def sov_ansiblex_jump(gateID):
     up_wait(lambda: session.solarsystemid2 != before, 60000, 1000)
     up_sleep(5000)
     return dict(before=before, after=session.solarsystemid2, error=None)
+
+
+def sov_raid_window(skyhookID):
+    # What the skyhook window and the map read (sovereigntyResourceSvc).
+    vd = sm.GetService('sovereigntyResourceSvc').GetTheftVulnerabilityForSkyhook(skyhookID)
+    return dict(start=vd.start, end=vd.end, vulnerable=vd.vulnerable)
+
+
+def sov_raid_stock(skyhookID):
+    # (secured, unsecured): the raidable surplus is the unsecured part.
+    return sm.GetService('sovereigntyResourceSvc').GetReagentsInSkyhookNow(skyhookID)
+
+
+def sov_raid_set_stock(skyhookID, reagentTypeID, secured, unsecured):
+    # GM setup: the client's own dev admin call (skyhook messenger admin_modify_reagents).
+    return sm.GetService('sovereigntyResourceSvc').skyhookMessenger.admin_modify_reagents(
+        skyhookID, reagentTypeID, secured, unsecured)
+
+
+def sov_silo_for(skyhookID):
+    bp = up_bp()
+    for k, v in bp.slimItems.items():
+        if v.typeID == SOV_SILO:
+            comp = bp.componentRegistry.GetComponentForItem(k, 'skyhookReagentSilo')
+            if comp is not None and getattr(comp, 'skyhookID', None) == skyhookID:
+                return k
+    return None
+
+
+def sov_link_checks(siloID):
+    # The link component's own checks (linkWithShip.CanCreateLink), as its tooltip shows them.
+    from menucheckers.celestialCheckers import CelestialChecker
+    from menucheckers.sessionChecker import SessionChecker
+    bp = up_bp()
+    comp = bp.componentRegistry.GetComponentForItem(siloID, 'linkWithShip')
+    return comp.CanCreateLink(CelestialChecker(bp.slimItems[siloID], cfg, SessionChecker(session, sm)))[0]
+
+
+def sov_link(siloID):
+    # The space menu's Link (linkWithShip.InitiateLink). Answers the component's link tuple, or
+    # the refusal text.
+    from spacecomponents.client.components.linkWithShip import InitiateLink
+    try:
+        InitiateLink(sm.GetService('michelle'), siloID)
+    except UserError as e:
+        return ('refused', e.dict.get('notify') if isinstance(e.dict, dict) else e.msg)
+    up_sleep(4000)
+    return getattr(up_bp().slimItems[siloID], 'component_linkWithShip', None)
+
+
+def sov_link_state(siloID):
+    comp = up_bp().componentRegistry.GetComponentForItem(siloID, 'linkWithShip')
+    return (comp.linkedShipID, comp.GetLinkState())
