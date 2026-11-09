@@ -268,15 +268,27 @@ function gatewayBase(ports = activePorts()) {
 
 // ---------- HTTP ----------
 
-async function requestJSON(url, { method = "GET", headers = {}, body, timeoutMs = 30_000 } = {}) {
+// A kept-alive socket the server closed while this process was blocked (a spawnSync such as the
+// Play.bat preflight before a client launch) is only found dead when the next request is written
+// to it: ECONNRESET or UND_ERR_SOCKET (the other side closed), with no answer. A GET, or a request the caller marks
+// idempotent, is sent once more on a new socket; anything else fails as before.
+async function requestJSON(url, { method = "GET", headers = {}, body, timeoutMs = 30_000, idempotent } = {}) {
   let response;
+  const send = () => fetch(url, {
+    method,
+    headers: body === undefined ? headers : { "content-type": "application/json", ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const retryReset = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent === true;
   try {
-    response = await fetch(url, {
-      method,
-      headers: body === undefined ? headers : { "content-type": "application/json", ...headers },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    try {
+      response = await send();
+    } catch (error) {
+      const code = error && error.cause && error.cause.code;
+      if (!retryReset || !(code === "ECONNRESET" || code === "UND_ERR_SOCKET")) throw error;
+      response = await send();
+    }
   } catch (error) {
     const cause = error && error.cause && error.cause.code ? error.cause.code : error.message;
     const next = cause === "ECONNREFUSED" || cause === "ECONNRESET"
@@ -306,9 +318,11 @@ function gatewayHeaders() {
 // Only a server this tree's bridge vouches for is talked to. The bridge exists only where gridcheck
 // is installed, so a server from an instance without it (one people play on) is never logged into,
 // even when a port or EVEJS_MICROSERVICES_PORT happens to point at it.
-async function gateway(method, route, body) {
+async function gateway(method, route, body, { idempotent } = {}) {
   requireHandshake();
-  const { status, json } = await requestJSON(`${gatewayBase()}${route}`, { method, body, headers: gatewayHeaders() });
+  const { status, json } = await requestJSON(`${gatewayBase()}${route}`, {
+    method, body, headers: gatewayHeaders(), idempotent,
+  });
   if (status >= 400 || json.ok === false) {
     // Gateway errors are { ok: false, error: "<CODE>", message }.
     const code = typeof json.error === "string" ? json.error : `HTTP ${status}`;
@@ -486,7 +500,8 @@ async function refuseClientAccount(username) {
 }
 
 async function ensureCharacter(username, wantedName) {
-  const created = await gateway("POST", "/account/create", { username });
+  // account/create answers an existing account with created: false, so a repeat is harmless.
+  const created = await gateway("POST", "/account/create", { username }, { idempotent: true });
   const accountID = Number(created.account && created.account.accountID);
   if (!accountID) throw new CliError(`account/create returned no accountID for ${username}`);
 
@@ -4222,6 +4237,7 @@ module.exports = {
   helpText,
   loadoutFromArgs,
   parseArgs,
+  requestJSON,
   restartUpFlags,
   selectLogLines,
   slashSubject,
