@@ -875,7 +875,7 @@ function createGridWatch({
   // at: an itemID to watch around instead of a character's session. No session
   // means no client view, and the plugins' hooks get characterID null.
   async function runWatch({ characterID = null, at = null, forMs, everyMs, offGridEveryMs, clientMode = "all",
-    divergeMeters = null, positions = false, perfEveryMs = 0, modules = true }, sink, closers = []) {
+    divergeMeters = null, positions = false, perfEveryMs = 0, modules = true, follow = false }, sink, closers = []) {
     const startedAtMs = now();
     if (at) characterID = null;
     let anchorDetail = null;
@@ -891,6 +891,7 @@ function createGridWatch({
       const watcher = safe(() => hook.onGrid.watch({ characterID, startedAtMs }));
       if (watcher && typeof watcher.step === "function") gridHooks.push({ name: hook.name, step: watcher.step });
     }
+    let pilotOnline = null;
     const differ = createGridDiffer({
       modules,
       gridHooks,
@@ -965,7 +966,16 @@ function createGridWatch({
     for (;;) {
       if (sink.closed()) { reason = "client-closed"; break; }
       const session = at ? null : findSession(characterID);
-      if (!at && !session) { reason = "session-gone"; break; }
+      if (!at && !session && !follow) { reason = "session-gone"; break; }
+      if (follow && pilotOnline !== Boolean(session)) {
+        pilotOnline = Boolean(session);
+        emit({ kind: "PILOT", online: pilotOnline });
+      }
+      if (!at && !session) {
+        if (now() - startedAtMs >= forMs) break;
+        await wait(everyMs);
+        continue;
+      }
       const sampleStart = perfNow();
       const atMs = now();
       sampleNowMs = atMs;

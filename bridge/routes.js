@@ -194,7 +194,12 @@ function createAgentBridgeRoutes({
     if (at && toPositiveInt(body.characterID)) {
       return { statusCode: 400, body: { ok: false, error: "Give characterID or at, not both." } };
     }
-    if (!at) {
+    const follow = Boolean(body && body.follow === true);
+    if (at && follow) return { statusCode: 400, body: { ok: false, error: "Give at or follow, not both." } };
+    if (follow && !toPositiveInt(body.characterID)) {
+      return { statusCode: 400, body: { ok: false, error: "A positive characterID is required." } };
+    }
+    if (!at && !follow) {
       const found = sessionFor(body && body.characterID);
       if (found.error) return found.error;
     }
@@ -222,7 +227,8 @@ function createAgentBridgeRoutes({
         },
       };
     }
-    const clientMode = body.client === undefined || body.client === null ? "all" : String(body.client);
+    // A followed pilot's session may not be a gateway session, so it has no client view.
+    const clientMode = follow ? "off" : body.client === undefined || body.client === null ? "all" : String(body.client);
     if (!CLIENT_MODES.has(clientMode)) {
       return { statusCode: 400, body: { ok: false, error: "client must be all, fx, diverge or off." } };
     }
@@ -259,6 +265,7 @@ function createAgentBridgeRoutes({
         divergeMeters,
         positions: body.positions === true,
         perfEveryMs: perfEverySeconds * 1000,
+        ...(follow ? { follow: true } : {}),
       }, sink),
     };
   }

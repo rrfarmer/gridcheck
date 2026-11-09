@@ -1656,7 +1656,7 @@ function createLogTailer({ file, pid, pattern, keep, onEvent }) {
 // accepted the watch; `ended` resolves with { reason, error } when it stops.
 // state null with `at`: a watch around an entity, with no session to keep alive.
 async function openWatch(state, handshake, { forSeconds, everySeconds, offGridEverySeconds, client, divergeMeters,
-  positions = false, perfEverySeconds = 0, at = null, modules = true, log = true, grep, runDir,
+  positions = false, perfEverySeconds = 0, at = null, modules = true, log = true, grep, runDir, follow = false,
   print = (line) => console.log(line), onEvent = () => {} }) {
   fs.mkdirSync(runDir, { recursive: true });
   const timelinePath = path.join(runDir, "timeline.jsonl");
@@ -1704,7 +1704,7 @@ async function openWatch(state, handshake, { forSeconds, everySeconds, offGridEv
       headers: { authorization: `Bearer ${handshake.token}`, "content-type": "application/json" },
       body: JSON.stringify({ ...(at ? { at } : { characterID: state.characterID }), forSeconds, everySeconds,
         offGridEverySeconds, client, divergeMeters, positions: positions === true,
-        ...(modules === false ? { modules: false } : {}), ...(perfEverySeconds ? { perfEverySeconds } : {}) }),
+        ...(modules === false ? { modules: false } : {}), ...(perfEverySeconds ? { perfEverySeconds } : {}), ...(follow ? { follow: true } : {}) }),
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout((forSeconds + 120) * 1000)]),
     });
     if (!response.ok) {
@@ -1767,11 +1767,24 @@ function perfEveryFrom(flags) {
   return seconds;
 }
 
+// Resolve the pilot without logging in and closing another client's session.
+async function pilotState(username) {
+  const account = await gateway("GET", `/account?username=${encodeURIComponent(username)}`);
+  const accountID = Number(account.account && account.account.accountID || account.accountID);
+  if (!accountID) throw new CliError(`no account ${username}`);
+  const listed = await gateway("GET", `/characters?accountID=${accountID}`);
+  const first = Array.isArray(listed.characters) ? listed.characters[0] : null;
+  const characterID = first ? Number(first.characterID || first.id) : 0;
+  if (!characterID) throw new CliError(`account ${username} has no character`);
+  return { ...readState(), characterID };
+}
+
 async function cmdWatch(flags) {
   const at = atFromFlags(flags);
-  const state = at ? null : requireLogin(readState());
+  if (at && flags.pilot) throw new CliError("give --at or --pilot, not both");
+  const state = at ? null : flags.pilot ? await pilotState(String(flags.pilot)) : requireLogin(readState());
   const handshake = requireHandshake();
-  if (state) await keepAlive(state);
+  if (state && !flags.pilot) await keepAlive(state);
   const forSeconds = flags.for === undefined ? 600 : Number(flags.for);
   const everySeconds = flags.every === undefined ? 2 : Number(flags.every);
   const offGridEverySeconds = flags["offgrid-every"] === undefined ? undefined : Number(flags["offgrid-every"]);
@@ -1787,6 +1800,7 @@ async function cmdWatch(flags) {
 
   const watch = await openWatch(state, handshake, {
     forSeconds, everySeconds, offGridEverySeconds, client, divergeMeters, perfEverySeconds, at,
+    follow: Boolean(flags.pilot),
     modules: !flags["no-modules"],
     // Positions feed the viewer (gridcheck view); a run always records them.
     positions: Boolean(flags.positions),
@@ -2045,7 +2059,21 @@ function pluginIO() {
     resolveSystemID,
     solarSystems: solarSystemTable,
     runSlash,
+    ensureCharacter,
+    pilotState,
+    runDir: () => (activeRun ? activeRun.runDir : null),
   };
+}
+
+// One failing plugin must not prevent the others from cleaning up.
+async function runStopHooks() {
+  for (const hook of REGISTRY.stopHooks) {
+    try {
+      await hook.run(pluginIO(), { runDir: activeRun ? activeRun.runDir : null });
+    } catch (error) {
+      console.log(`plugin ${hook.plugin}: stop failed: ${error.message}`);
+    }
+  }
 }
 
 // ---------- scenarios ----------
@@ -2765,7 +2793,9 @@ async function cmdRun(positionals, flags) {
       },
     step: runScenarioStep,
     startWatch: async (onEvent) => {
-      const watch = await openWatch(requireLogin(readState()), requireHandshake(), {
+      const held = requireLogin(readState());
+      const watch = await openWatch(scenario.watch.pilot ? await pilotState(scenario.watch.pilot) : held, requireHandshake(), {
+        follow: Boolean(scenario.watch.pilot),
         // The bridge's longest watch; the run stops it at its own stop condition.
         forSeconds: 3600,
         everySeconds: scenario.watch.every,
@@ -2796,6 +2826,7 @@ async function cmdRun(positionals, flags) {
     },
     down: async () => {
       await stopRunClients(Boolean(flags["keep-up"]));
+      if (!flags["keep-up"]) await runStopHooks();
       if (!boots && !reusing) return;
       if (reuse) console.log("--reuse: the server stays up for the next --reuse run; `gridcheck down` stops it");
       else if (flags["keep-up"]) console.log("--keep-up: the server stays up; `gridcheck down` stops it");
@@ -3337,6 +3368,7 @@ function tailFile(file, count) {
 
 async function cmdDown(flags) {
   requireManaged("down");
+  await runStopHooks();
   const run = readRun() || {};
   const handshake = readHandshake();
   if (AUTO && startedElsewhere(handshake)) {
@@ -4127,7 +4159,7 @@ const CORE_COMMANDS = {
   },
   inspect: { usage: ["inspect <itemID> [--json]"], run: cmdInspect },
   watch: {
-    usage: ["watch [--for 600] [--every 2] [--offgrid-every 5] [--grep <regex>] [--no-log] [--json] [--run <id>]",
+    usage: ["watch [--pilot <account>] [--for 600] [--every 2] [--offgrid-every 5] [--grep <regex>] [--no-log] [--json] [--run <id>]",
       "      [--client all|fx|diverge|off] [--diverge-meters 5000] [--positions] [--perf [--perf-every 5]]",
       "      [--no-modules] [--at <itemID>]"],
     run: (_positionals, flags) => cmdWatch(flags),
