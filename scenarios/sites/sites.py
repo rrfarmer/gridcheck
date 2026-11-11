@@ -686,7 +686,8 @@ def agent_fly_to(agentID, rangeMeters=2500, timeout_ms=280000):
         raise AssertionError('no homebase bookmark for agent %d' % agentID)
     site_goto_system(bm.solarsystemID)
     ships = lambda: [row for row in site_entities() if getattr(row[3], 'ownerID', None) == agentID or getattr(row[3], 'charID', None) == agentID]
-    if not ships():
+    # The agent's ship may be listed system-wide; warp unless it is already within warp range.
+    if not ships() or site_bp().DistanceBetween(session.shipid, ships()[0][1]) > 150000:
         movementFunctions.WarpToBookmark(bm, 0.0)
         site_sleep(4000)
         site_wait(lambda: site_bp().GetBall(session.shipid).mode != 3, timeout_ms, 2000)
