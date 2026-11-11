@@ -1,0 +1,82 @@
+{
+  "description": "Rampant Drone Fabricator (EvEJS PR 379) in a real EVE client: an Ishtar warps onto the Fabricator in a C1-C3 wormhole (J-space 31000018), which starts wave 1; the driver clears waves 1-5 with drones (real kills, the Fabricator ignores GM clears). In the 20 s breaks after waves 3 and 4 the Fabricator takes no damage; in the break after wave 5 it does. Survival is GM help (/heal when armor falls under half), since the check is the site, not the tank. Needs the client-agent patch and an untouched Fabricator in that system. Driver: sites/sites.py.",
+  "world": "fresh",
+  "setup": [
+    {
+      "loadout": {
+        "ship": "Ishtar",
+        "modules": [
+          "Medium Armor Repairer II x2",
+          "Damage Control II",
+          "Multispectrum Energized Membrane II",
+          "Drone Damage Amplifier II",
+          "Stasis Webifier II",
+          "Omnidirectional Tracking Link II",
+          "10MN Afterburner II"
+        ],
+        "drones": [
+          "Hobgoblin II x5",
+          "Hammerhead II x5"
+        ],
+        "into": 60003760,
+        "owner": 140000006
+      },
+      "note": "the client character's ship, left in Jita 4-4"
+    },
+    {
+      "clientLaunch": {
+        "user": "e2eclient"
+      }
+    },
+    {
+      "clientEval": {
+        "file": "sites/sites.py"
+      },
+      "timeout": 30,
+      "note": "loads the driver"
+    },
+    {
+      "clientEval": "fab_step_arrive(31000018)",
+      "assert": true,
+      "timeout": 300,
+      "note": "board, undock, jump to the system, warp onto the Fabricator: wave 1 starts"
+    },
+    {
+      "clientEval": "fab_step_waves_start(5, (3, 4))",
+      "assert": true,
+      "timeout": 30,
+      "note": "waves 1-5 in a tasklet, probing the Fabricator in the breaks after waves 3, 4 and 5"
+    },
+    {
+      "repeat": [
+        {
+          "clientEval": "fab_step_poll(280)",
+          "assert": true,
+          "timeout": 300
+        }
+      ],
+      "every": 1,
+      "times": 8,
+      "note": "up to about 37 minutes (a run fits in 3000 s); a slower fight needs a stronger hull"
+    },
+    {
+      "clientEval": "fab_step_result()",
+      "assert": true,
+      "timeout": 30,
+      "note": "no damage before wave 5 is cleared, damage after"
+    }
+  ],
+  "until": {
+    "any": [
+      "CLIENT_EXCEPTION"
+    ],
+    "timeout": 5,
+    "grace": 2
+  },
+  "expect": [
+    {
+      "match": "no CLIENT_EXCEPTION where~dungeonTracking",
+      "note": "the objective panel raised nothing"
+    }
+  ]
+}
