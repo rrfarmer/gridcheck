@@ -1,0 +1,21 @@
+{
+  "description": "The Blood-Stained Stars epic arc (EvEJS PRs 372 and 382) in a real EVE client, start to finish, on a fresh character with an Ishtar at Sister Alitura's station (Arnon, 60012607). The arc is stepped through the agents' own conversation actions (accept, complete, the branch choices); the GM /missioncomplete stands in for most mission scenes. Checks: in-space handovers bind (Tevis Jak); the Caldari spy (14141) leads to Bag of Blood and Support the Caldari State (14442) to The Caldari Commander; the 14413 courier; Dagan from the 14445 container, handed back by the Caldari commander; the 14469 finale through its acceleration gate with Dagan in the Cargo Wreathe, after which the arc status shows 14469 completed. Needs the client-agent patch, an account that has not run the arc (change clientLaunch.user to rerun) and an Ishtar for that character in 60012607 (gridcheck loadout --into 60012607 --owner <character>). Driver: sites/sites.py.",
+  "world": "fresh",
+  "setup": [
+    { "clientLaunch": { "user": "bssarc2", "name": "Arc Runner Two" } },
+    { "clientEval": { "file": "sites/sites.py" }, "timeout": 30 },
+    { "clientEval": "site_slash('/allskills') and site_dock_home_at(60012607) and site_board_type_here('Ishtar')", "assert": true, "timeout": 120 },
+    { "clientEval": "bss_run({14141: 10001, 14442: 10002})", "assert": true, "timeout": 30 },
+    { "repeat": [{ "clientEval": "bss_poll(280)", "assert": true, "timeout": 300 }], "every": 1, "times": 3 },
+    { "clientEval": "bss_last()[2] == 14413 and bss_chose(14141) == [10001] and bss_step_courier()", "assert": true, "timeout": 200 },
+    { "clientEval": "bss_run({14141: 10001, 14442: 10002})", "assert": true, "timeout": 30 },
+    { "repeat": [{ "clientEval": "bss_poll(280)", "assert": true, "timeout": 300 }], "every": 1, "times": 2 },
+    { "clientEval": "bss_chose(14442) == [10002] and bss_last()[2] == 14445 and bss_step_dagan()", "assert": true, "timeout": 300 },
+    { "clientEval": "bss_step_finale()", "assert": true, "timeout": 300 }
+  ],
+  "until": { "any": ["CLIENT_EXCEPTION"], "timeout": 5, "grace": 2 },
+  "expect": [
+    { "match": "no CLIENT_EXCEPTION where~agentDialogue", "note": "the conversation raised nothing" },
+    { "match": "no CLIENT_EXCEPTION where~bookmarkChecker", "note": "the objective panel measured its distance (GetEntryPoint as reals)" }
+  ]
+}

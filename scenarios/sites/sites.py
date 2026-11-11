@@ -569,3 +569,282 @@ def fp_step_complete():
     loot = [evetypes.GetName(i.typeID) for i in sm.GetService('invCache').GetInventoryFromId(wreck).List()]
     site_guard(False)
     return 'Stellar Surveillance Data' in loot
+
+
+# ---------- agent missions (the conversation window's own calls) ----------
+
+def agent_do(agentID, actionID=None):
+    # agentDialogueWindow.ExecuteAgentAction: ((agentSays, [(actionID, buttonID)]), info).
+    return sm.GetService('agents').GetAgentMoniker(agentID).DoAction(actionID)
+
+
+def agent_press(agentID, buttons, first=None):
+    # Press the first offered action whose button ID is in buttons (appConst
+    # agentDialogueButton*: 2 request/view mission, 3 accept, 6 complete, 9 decline...).
+    (says, actions), info = agent_do(agentID, first)
+    for actionID, button in actions:
+        if button in buttons:
+            return agent_do(agentID, actionID)
+    raise AssertionError('no button %r among %r (%r)' % (buttons, actions, says))
+
+
+def agent_journal(agentID):
+    return sm.GetService('agents').GetAgentMoniker(agentID).GetMissionJournalInfo()
+
+
+def agent_bookmark(agentID, locationType='dungeon'):
+    bms = sm.GetService('bookmarkSvc').GetAgentBookmarks()
+    rows = [b for b in (bms.values() if hasattr(bms, 'values') else bms)
+            if getattr(b, 'agentID', 0) == agentID and getattr(b, 'locationType', None) == locationType]
+    return rows[0] if rows else None
+
+
+def agent_warp(agentID, locationType='dungeon', warpRange=0.0, timeout_ms=240000):
+    # The journal's Warp To: movementFunctions.WarpToBookmark on the agent's bookmark.
+    from eve.client.script.ui.services.menuSvcExtras import movementFunctions
+    bm = agent_bookmark(agentID, locationType)
+    if bm is None:
+        raise AssertionError('no %s bookmark from agent %d' % (locationType, agentID))
+    site_goto_system(bm.locationID if bm.locationID and bm.locationID < 40000000 else bm.solarsystemID)
+    movementFunctions.WarpToBookmark(bm, warpRange)
+    site_sleep(4000)
+    site_wait(lambda: site_bp().GetBall(session.shipid).mode != 3, timeout_ms, 2000)
+    site_sleep(5000)
+    return bm
+
+
+def arc_step(agentIDs, log, complete_with_gm=True):
+    # One move through an epic arc by the agents' own conversation actions: accept an offer
+    # (button 3), turn in (6), or, for an accepted mission, mark its objective done with the
+    # GM /missioncomplete (setup help) and turn in. A talk-to mission names its target agent
+    # in the journal; that agent joins agentIDs. Answers the move made, or None.
+    for agentID in list(agentIDs):
+        sm.GetService('agents').agentMonikers.pop(agentID, None)
+        try:
+            (says, actions), info = agent_do(agentID)
+        except Exception as error:
+            log.append((agentID, 'error', repr(error)[:200]))
+            continue
+        choices = [(actionID, button) for actionID, button in actions if isinstance(button, dict)]
+        if choices:
+            # A branch choice (a mission picked from the offered alternatives): the
+            # scenario decides, so stop here.
+            log.append((agentID, 'choice', choices))
+            return ('choice', agentID, choices)
+        buttons = dict((button, actionID) for actionID, button in actions)
+        contentID = says[1] if isinstance(says, tuple) and len(says) > 1 else None
+        if 2 in buttons and len(buttons) == 1:
+            (says, actions), info = agent_do(agentID, buttons[2])
+            buttons = dict((button, actionID) for actionID, button in actions)
+            contentID = says[1] if isinstance(says, tuple) and len(says) > 1 else contentID
+        if 3 in buttons:
+            agent_do(agentID, buttons[3])
+            journal = agent_journal(agentID) or {}
+            for kind, data in (journal.get('objectives') or {}).get('objectives') or []:
+                if kind == 'agent' and isinstance(data[0], (int, long)) and data[0] not in agentIDs:
+                    agentIDs.append(data[0])
+            log.append((agentID, 'accepted', contentID))
+            return ('accepted', agentID, contentID)
+        if 6 in buttons:
+            result = agent_do(agentID, buttons[6])
+            if result[1].get('missionCompleted'):
+                log.append((agentID, 'completed', contentID))
+                return ('completed', agentID, contentID)
+            sm.GetService('agents').agentMonikers.pop(agentID, None)
+        journal = agent_journal(agentID) or {}
+        if journal.get('missionState') == 2 and complete_with_gm:
+            site_slash('/missioncomplete %d' % agentID)
+            site_sleep(1000)
+            stationID = getattr(sm.GetService('agents').GetAgentByID(agentID), 'stationID', None)
+            if stationID and session.stationid != stationID:
+                # A station agent hands in only to a pilot docked with them.
+                site_slash('/tr me %d' % stationID)
+                site_wait(lambda: session.stationid == stationID, 60000)
+                site_sleep(4000)
+            elif not stationID:
+                agent_fly_to(agentID)
+            sm.GetService('agents').agentMonikers.pop(agentID, None)
+            (says, actions), info = agent_do(agentID)
+            buttons = dict((button, actionID) for actionID, button in actions)
+            if 6 in buttons:
+                agent_do(agentID, buttons[6])
+                log.append((agentID, 'gm-completed', journal.get('contentID')))
+                return ('completed', agentID, journal.get('contentID'))
+            log.append((agentID, 'stuck', journal.get('contentID'), actions))
+    return None
+
+
+
+def agent_fly_to(agentID, rangeMeters=2500, timeout_ms=280000):
+    # An agent in space talks only to a pilot near their ship: warp to their homebase
+    # bookmark (the journal's), then approach the ship the agent flies.
+    from eve.client.script.ui.services.menuSvcExtras import movementFunctions
+    if not site_in_space():
+        site_undock()
+    bm = agent_bookmark(agentID, 'agenthomebase')
+    if bm is None:
+        raise AssertionError('no homebase bookmark for agent %d' % agentID)
+    site_goto_system(bm.solarsystemID)
+    ships = lambda: [row for row in site_entities() if getattr(row[3], 'ownerID', None) == agentID or getattr(row[3], 'charID', None) == agentID]
+    if not ships():
+        movementFunctions.WarpToBookmark(bm, 0.0)
+        site_sleep(4000)
+        site_wait(lambda: site_bp().GetBall(session.shipid).mode != 3, timeout_ms, 2000)
+        site_sleep(5000)
+    rows = ships()
+    if not rows:
+        raise AssertionError('agent %d not on grid' % agentID)
+    target = rows[0][1]
+    movementFunctions.KeepAtRange(target, 1000)
+    for button in site_hud_buttons():
+        if evetypes.GetName(button.moduleinfo.typeID).startswith('10MN Afterburner') and not (button.def_effect and button.def_effect.isActive):
+            uthread.new(button.ActivateModule)
+    site_wait(lambda: site_bp().DistanceBetween(session.shipid, target) < rangeMeters, timeout_ms, 2000)
+    return target
+
+
+# ---------- The Blood-Stained Stars (EvEJS PRs 372, 382) ----------
+
+BSS_ALITURA, BSS_CALDARI_COMMANDER = 3019356, 3019368
+BSS_RUN = {'agents': [BSS_ALITURA], 'log': [], 'moves': [], 'done': False, 'error': None}
+
+
+def site_dock_home_at(stationID):
+    if session.stationid != stationID:
+        site_slash('/tr me %d' % stationID)
+        site_wait(lambda: session.stationid == stationID, 60000)
+        site_sleep(5000)
+    return True
+
+
+def bss_run(choices, stop_at=None):
+    # Step the arc in a tasklet until it stops (a mission needing real play, a choice not in
+    # choices, or stop_at accepted); BSS_RUN records each move.
+    BSS_RUN.update({'done': False, 'error': None})
+
+    def run():
+        try:
+            for _ in range(160):
+                move = arc_step(BSS_RUN['agents'], BSS_RUN['log'])
+                if move and move[0] == 'choice':
+                    agentID, offered = move[1], move[2]
+                    missionID = offered[0][1]['Mission ID']
+                    act = choices.get(missionID)
+                    if act is None:
+                        BSS_RUN['moves'].append(('unknown choice', missionID))
+                        break
+                    agent_do(agentID, act)
+                    BSS_RUN['moves'].append(('chose', missionID, act))
+                    continue
+                BSS_RUN['moves'].append(move and move[:3])
+                if move is None or (stop_at and move[0] == 'accepted' and move[2] == stop_at):
+                    break
+                site_sleep(500)
+        except Exception as error:
+            BSS_RUN['error'] = repr(error)[:400]
+        BSS_RUN['done'] = True
+    uthread.new(run)
+    return True
+
+
+def bss_poll(seconds=280):
+    end = blue.os.GetWallclockTime() + seconds * 10000000
+    while blue.os.GetWallclockTime() < end and not BSS_RUN['done']:
+        site_sleep(2000)
+    return True
+
+
+def bss_last():
+    return [move for move in BSS_RUN['moves'] if move][-1]
+
+
+def bss_chose(missionID):
+    return [move[2] for move in BSS_RUN['moves'] if move and move[0] == 'chose' and move[1] == missionID]
+
+
+def bss_step_courier():
+    # 14413 A Stranger's Face: carry the Altered Identity Records to their station.
+    site_dock_home_at(60012607)
+    hangar = sm.GetService('invCache').GetInventory(const.containerHangar)
+    ship = sm.GetService('invCache').GetInventoryFromId(session.shipid)
+    for item in [i for i in hangar.List(const.flagHangar) if i.typeID == 30826]:
+        ship.Add(item.itemID, item.locationID, qty=item.stacksize, flag=const.flagCargo)
+    site_sleep(1500)
+    site_dock_home_at(60011317)
+    sm.GetService('agents').agentMonikers.pop(BSS_ALITURA, None)
+    return agent_press(BSS_ALITURA, (6,))[1].get('missionCompleted') is True
+
+
+def bss_dagan_container():
+    for row in site_entities():
+        if row[2] == 'Cargo Container' and row[0] < 100000:
+            if any(i.typeID == 30827 for i in sm.GetService('invCache').GetInventoryFromId(row[1]).List()):
+                return row[1]
+    return None
+
+
+def bss_step_dagan():
+    # 14445 Our Man Dagan (Caldari): clear wave 1, the Society of Conscious Thought cruiser
+    # leaves Dagan in a cargo container; hand in to the Caldari commander, who returns him.
+    from eve.client.script.ui.services.menuSvcExtras import movementFunctions
+    site_guard(True)
+    agent_warp(BSS_CALDARI_COMMANDER, 'dungeon')
+    site_tank()
+    fp_clear(include=None, real=1, timeout_ms=230000)
+    site_sleep(10000)
+    containers = [row[1] for row in site_entities() if row[2] == 'Cargo Container']
+    if not containers:
+        raise AssertionError('no cargo container on grid')
+    container = containers[0]
+    movementFunctions.KeepAtRange(container, 1000)
+    site_wait(lambda: site_bp().DistanceBetween(session.shipid, container) < 2400, 200000, 2000)
+    dagan = [i for i in sm.GetService('invCache').GetInventoryFromId(container).List() if i.typeID == 30827][0]
+    ship = sm.GetService('invCache').GetInventoryFromId(session.shipid)
+    ship.Add(dagan.itemID, container, qty=1, flag=const.flagCargo)
+    site_sleep(2000)
+    sm.GetService('agents').agentMonikers.pop(BSS_CALDARI_COMMANDER, None)
+    done = agent_press(BSS_CALDARI_COMMANDER, (6,))[1].get('missionCompleted') is True
+    kept = any(i.typeID == 30827 for i in ship.List(const.flagCargo))
+    return done and kept
+
+
+def bss_step_finale():
+    # 14469 Dal Segno al Fine: the final acceleration gate, Dagan into the Cargo Wreathe,
+    # turn in; the arc status records 14469 completed.
+    from eve.client.script.ui.services.menuSvcExtras import movementFunctions
+    sm.GetService('agents').agentMonikers.pop(BSS_CALDARI_COMMANDER, None)
+    agent_press(BSS_CALDARI_COMMANDER, (3,))
+    agent_warp(BSS_CALDARI_COMMANDER, 'dungeon')
+    gate = site_wait(lambda: [r[1] for r in site_entities() if r[2] == 'Acceleration Gate'], 30000)[0]
+    uthread.new(sm.GetService('menu').ActivateAccelerationGate, gate)
+    site_wait(lambda: gate not in site_bp().slimItems, 150000, 2000)
+    site_wait(lambda: site_bp().GetBall(session.shipid).mode != 3, 60000, 2000)
+    site_sleep(5000)
+    wreathe = site_wait(lambda: [r[1] for r in site_entities() if r[2] == 'Cargo Wreathe'], 30000)[0]
+    movementFunctions.KeepAtRange(wreathe, 800)
+    site_wait(lambda: site_bp().DistanceBetween(session.shipid, wreathe) < 2400, 200000, 2000)
+    ship = sm.GetService('invCache').GetInventoryFromId(session.shipid)
+    dagan = [i for i in ship.List(const.flagCargo) if i.typeID == 30827][0]
+    sm.GetService('invCache').GetInventoryFromId(wreathe).Add(dagan.itemID, session.shipid, qty=1)
+    site_wait(lambda: (agent_journal(BSS_CALDARI_COMMANDER) or {}).get('objectives', {}).get('completionStatus') == 1, 30000)
+    sm.GetService('agents').agentMonikers.pop(BSS_CALDARI_COMMANDER, None)
+    done = agent_press(BSS_CALDARI_COMMANDER, (6,))[1].get('missionCompleted') is True
+    status = sm.RemoteSvc('agentMgr').GetMyEpicArcStatus()
+    site_guard(False)
+    return done and status[29][14469].completedDate is not None
+
+
+def site_board_type_here(typeName):
+    # The hangar's Make Active on the newest assembled hull of this type in this station,
+    # answering the client's question about leaving the current ship.
+    rows = [i for i in sm.GetService('invCache').GetInventory(const.containerHangar).List(const.flagHangar)
+            if i.categoryID == const.categoryShip and i.singleton and evetypes.GetName(i.typeID) == typeName]
+    if not rows:
+        raise AssertionError('no %s in this hangar' % typeName)
+    row = max(rows, key=lambda i: i.itemID)
+    if session.shipid != row.itemID:
+        uthread.new(sm.GetService('station').TryActivateShip, row)
+        site_sleep(3000)
+        site_answer_yes()
+        site_wait(lambda: session.shipid == row.itemID, 30000)
+    return True
