@@ -1535,6 +1535,13 @@ class Agent(object):
         # A button and its own label both match its text; the outermost stands for both.
         matched = set(id(node) for node, _here, _chain in found)
         found = [row for row in found if not any(id(up) in matched for up in row[2])]
+        # Of several, a node whose whole text is the wanted text wins over one that only contains
+        # it: "Yes" is the button, not a question that says "Click yes?".
+        if filters['text'] and len(found) > 1:
+            want = search_text(args.get('text'))
+            exact = [row for row in found if search_text(full_text(row[0]) or u'') == want]
+            if exact:
+                found = exact
         index = args.get('index')
         if index is not None:
             index = bounded(index, -1, 0, 100000)
