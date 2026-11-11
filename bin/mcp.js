@@ -233,7 +233,7 @@ const CLI_ARGS = {
   loadout(p) {
     const { args, flag } = argList("loadout");
     const spec = { ship: p.ship };
-    for (const key of ["modules", "drones", "cargo", "charges", "into", "owner", "flag"]) if (p[key] !== undefined) spec[key] = p[key];
+    for (const key of ["modules", "drones", "fighters", "cargo", "charges", "into", "owner", "flag", "keepWreck"]) if (p[key] !== undefined) spec[key] = p[key];
     flag("spec", JSON.stringify(spec));
     flag("json", p.json);
     return args;
@@ -276,6 +276,7 @@ const CLI_ARGS = {
     flag("range", p.range);
     flag("target", p.action === "activate" ? p.target : undefined);
     flag("once", p.once);
+    flag("no-reload", p.noReload);
     flag("charge", p.charge);
     flag("count", p.count);
     flag("timeout", p.timeout);
@@ -733,6 +734,8 @@ const TOOLS = [
       ship: str("The hull, e.g. Tristan."),
       modules: { type: "array", items: { type: "string" }, description: "Fitted modules, e.g. [\"Light Neutron Blaster II x2\", \"1MN Afterburner II\"]." },
       drones: { type: "array", items: { type: "string" }, description: "Drone bay, e.g. [\"Hobgoblin II x5\"]." },
+      fighters: { type: "array", items: { type: "string" }, description: "Fighter bay of a carrier, e.g. [\"Templar I x9\"]; the pilot loads tubes." },
+      keepWreck: { type: "boolean", description: "In space the old ship is destroyed with a wreck; it is removed unless this is true." },
       cargo: { type: "array", items: { type: "string" }, description: "Cargo hold, e.g. [\"Antimatter Charge S x400\"]." },
       charges: { type: "array", items: { type: "string" }, description: "Charges to load: a full clip in every fitted module that takes one; no count." },
       into: int("Leave the ship here instead of boarding it: a station ID, or a corporation office's ID (the one the client opens it by). " +
@@ -865,6 +868,7 @@ const TOOLS = [
       drones: str("launchDrones: which drone-bay stacks, all (default) or name~..."),
       range: num("orbit (default 5000), keepAtRange (default 10000), warpTo (default 0): metres.", { minimum: 0 }),
       once: bool("activate: one cycle instead of repeating."),
+      noReload: bool("activate: don't reload an emptied module from the cargo first (the real client does that itself)."),
       charge: str("loadAmmo: the charge in the cargo hold, e.g. \"EMP S\" or name~EMP."),
       count: int("launchDrones: how many.", { minimum: 1, maximum: 50 }),
       timeout: int("lock: seconds to wait for the lock (default 30).", { minimum: 1, maximum: 600 }),

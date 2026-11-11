@@ -28,7 +28,7 @@ const { annotateRow, createGridWatch } = require("./watch");
 const { createDestinyTee, probeDestinyLayout } = require("./destiny");
 const { createAgentBridgeViewer } = require("./viewer");
 const { createClientAgent } = require("./client");
-const { createLoadout, loadIntoModules, loadLoadoutModules, loadModuleTable } = require("./loadout");
+const { createLoadout, loadIntoModules, loadLoadoutModules, loadModuleTable, loadWreckModules } = require("./loadout");
 const { ITEMS_EXPORTS, createItemsReader } = require("./items");
 const { createPerfMonitor } = require("./perf");
 const { createStock, serverRequire } = require("./stock");
@@ -171,8 +171,11 @@ function createService({ serverRoot, stock: givenStock = null, pluginsDir = DEFA
         const load = serverRequire(serverRoot);
         const { modules, missing } = loadLoadoutModules(load);
         const into = loadIntoModules(load);
+        // Optional: without it a swap in space keeps the old ship's wreck.
+        const wreck = loadWreckModules(load);
         loadoutBuilder = missing.length ? { error: missing.join("; "), missing, intoMissing: into.missing }
-          : { run: createLoadout({ ...modules, ...into.modules }, { intoMissing: into.missing }), missing: [], intoMissing: into.missing };
+          : { run: createLoadout({ ...modules, ...into.modules, ...(wreck.missing.length ? {} : wreck.modules) },
+            { intoMissing: into.missing }), missing: [], intoMissing: into.missing };
         if (missing.length) log.warn(`[AgentBridge] loadout off: ${loadoutBuilder.error}`);
         else if (into.missing.length) log.warn(`[AgentBridge] loadout into off: ${into.missing.join("; ")}`);
       }

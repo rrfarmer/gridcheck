@@ -22,7 +22,7 @@ const ACTIONS = Object.freeze({
   stop: {},
   lock: { target: "required", timeout: 30 },
   unlock: { target: "required" },
-  activate: { modules: "weapons", target: "optional", once: false },
+  activate: { modules: "weapons", target: "optional", once: false, noReload: false },
   deactivate: { modules: "weapons" },
   loadAmmo: { modules: "weapons", charge: "required" },
   launchDrones: { drones: "all", count: null },
@@ -38,7 +38,7 @@ const ACTION_USAGE = [
   "gridcheck act stop",
   "gridcheck act lock <target> [--timeout 30]",
   "gridcheck act unlock <target>",
-  "gridcheck act activate [<modules>] [--target <target>] [--once]",
+  "gridcheck act activate [<modules>] [--target <target>] [--once] [--no-reload]",
   "gridcheck act deactivate [<modules>]",
   "gridcheck act loadAmmo [<modules>] --charge <charge>",
   "gridcheck act launchDrones [<drones>] [--count N]",
@@ -75,6 +75,10 @@ function parseMeters(text) {
   const match = /^(\d+(?:\.\d+)?)(m|km)?$/i.exec(String(text));
   return match ? Number(match[1]) * UNITS[(match[2] || "").toLowerCase()] : null;
 }
+
+// name~"Caldari Navy Antimatter" -> Caldari Navy Antimatter: a quoted value,
+// as target terms already take, so a name with spaces can be given whole.
+const unquote = (text) => String(text).replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
 
 function regex(text, where) {
   try {
@@ -226,7 +230,7 @@ function parseModuleSpec(text) {
     } else {
       const match = /^(name|group)~(.+)$/i.exec(token);
       if (!match) throw new Error(`modules: can't read "${token}"; use weapons, high, mid, low, all, an itemID, name~ or group~`);
-      const pattern = regex(match[2], `modules ${token}`);
+      const pattern = regex(unquote(match[2]), `modules ${token}`);
       const key = match[1].toLowerCase() === "name" ? "name" : "groupName";
       tests.push((item) => pattern.test(String(item[key] || "")));
     }
@@ -253,13 +257,13 @@ function pickHoldItems(items, slot, spec) {
   if (source && source !== "all") {
     const match = /^(name|group)~(.+)$/i.exec(source);
     if (match) {
-      const pattern = regex(match[2], source);
+      const pattern = regex(unquote(match[2]), source);
       const key = match[1].toLowerCase() === "name" ? "name" : "groupName";
       test = (item) => pattern.test(String(item[key] || ""));
     } else if (/^\d+$/.test(source)) {
       test = (item) => Number(item.itemID) === Number(source) || Number(item.typeID) === Number(source);
     } else {
-      test = (item) => String(item.name || "").toLowerCase() === source.toLowerCase();
+      test = (item) => String(item.name || "").toLowerCase() === unquote(source).toLowerCase();
     }
   }
   const chosen = inHold.filter(test).sort((a, b) => b.quantity - a.quantity);
@@ -394,12 +398,51 @@ async function runAction(action, io) {
         row = locked.length ? (grid.entities || []).find((entry) => entry.itemID === locked[0]) || { itemID: locked[0], distanceMeters: null } : null;
       }
       const results = [];
+      const tryOn = (item) => io.call("dogmaIM", "Activate", [item.itemID, "", row ? row.itemID : null, action.once ? 0 : -1]);
       for (const item of modules) {
         try {
-          await io.call("dogmaIM", "Activate", [item.itemID, "", row ? row.itemID : null, action.once ? 0 : -1]);
+          await tryOn(item);
           results.push({ item, ok: true });
         } catch (error) {
           results.push({ item, ok: false, error: errorText(error) });
+        }
+      }
+      // The real client reloads an emptied weapon from the cargo by itself
+      // (godma's auto-reload after NoCharges); the headless pilot has no client,
+      // so a module refused for having no charges gets a stack the server will
+      // take, then a retry once the reload is done. --no-reload leaves it empty.
+      const reloaded = [];
+      if (!action.noReload) {
+        for (const entry of results) {
+          if (entry.ok || !/NoCharges/i.test(entry.error || "")) continue;
+          const cargo = (await io.listShip(self.itemID))
+            .filter((stack) => stack.slot === "cargo" && stack.quantity > 0 && (stack.categoryID === null || stack.categoryID === 8))
+            .sort((a, b) => b.quantity - a.quantity);
+          let charged = null;
+          for (const stack of cargo) {
+            try {
+              await io.call("dogmaIM", "LoadAmmo", [self.itemID, [entry.item.itemID], [stack.itemID], self.itemID]);
+              charged = stack;
+              break;
+            } catch (_error) {
+              // Not a charge this module takes; try the next stack.
+            }
+          }
+          if (!charged) continue;
+          const startedAt = now();
+          for (;;) {
+            try {
+              await tryOn(entry.item);
+              entry.ok = true;
+              delete entry.error;
+              reloaded.push(`${moduleText(entry.item)} from ${charged.name || charged.typeID}`);
+              break;
+            } catch (error) {
+              entry.error = errorText(error);
+              if (now() - startedAt >= 15000) break;
+              await sleep(1000);
+            }
+          }
         }
       }
       const on = results.filter((entry) => entry.ok);
@@ -408,6 +451,7 @@ async function runAction(action, io) {
         ok: refused.length === 0,
         text: `${on.length} of ${results.length} module(s) on${row ? ` at ${describeBall(row)}` : ""}` +
           `${action.once ? ", one cycle" : ""}: ${on.map((entry) => moduleText(entry.item)).join(", ") || "none"}` +
+          `${reloaded.length ? `; reloaded first: ${reloaded.join(", ")}` : ""}` +
           `${refused.length ? `; refused: ${refused.map((entry) => `${moduleText(entry.item)}: ${entry.error}`).join("; ")}` : ""}`,
         ids: row ? [String(row.itemID)] : [],
       };
@@ -513,6 +557,7 @@ function actionFromArgs(type, positionals, flags) {
   }
   if (flags.timeout !== undefined) action.timeout = Number(flags.timeout);
   if (flags.once) action.once = true;
+  if (flags["no-reload"]) action.noReload = true;
   if (flags.charge !== undefined) action.charge = String(flags.charge);
   if (flags.count !== undefined) action.count = Number(flags.count);
   checkAction(action);

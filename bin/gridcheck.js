@@ -103,7 +103,7 @@ const AUTO = MODE === "auto";
 const BOOLEAN_FLAGS = new Set(["all", "json", "any-pid", "force", "fresh", "no-market", "no-log", "help",
   "check", "keep-up", "reuse", "positions", "once", "serve", "offline", "dry-run", "profile", "perf", "now", "detach", "mcp", "save", "hidden",
   "double", "set", "enter", "list", "any-build", "assert", "no-console", "tutorial", "keep-clients", "clients", "npc", "no-modules",
-  "noise", "exceptions", "shape", "inherited", "reads",
+  "noise", "exceptions", "shape", "inherited", "reads", "keep-wreck", "no-reload",
   ...REGISTRY.booleanFlags]);
 
 class CliError extends Error {}
@@ -1892,6 +1892,7 @@ function loadoutFromArgs(positionals, flags) {
   // --into, --owner and --flag win over the same keys in a file or spec.
   if (loadoutTools.isObject(raw)) {
     for (const key of loadoutTools.PLACEMENT) if (flags[key] !== undefined) raw[key] = flags[key];
+    if (flags["keep-wreck"]) raw.keepWreck = true;
   }
   const { loadout, problems } = loadoutTools.normalizeLoadout(raw);
   if (!loadout) throw new CliError(`${problems.join("\n")}\nusage: ${CORE_COMMANDS.loadout.usage.join("\n       ")}`);
@@ -4148,7 +4149,7 @@ const CORE_COMMANDS = {
   },
   teleport: { usage: ["teleport <system name|ID> [--as client [--user <account>]]"], run: cmdTeleport },
   loadout: {
-    usage: ["loadout <ship> [--modules \"Name xN, ...\"] [--drones ...] [--cargo ...] [--charges ...] [--json]",
+    usage: ["loadout <ship> [--modules \"Name xN, ...\"] [--drones ...] [--fighters ...] [--cargo ...] [--charges ...] [--keep-wreck] [--json]",
       "loadout --file <loadout.json> | --spec '<json>'",
       "loadout ... --into <stationID|officeID> [--owner <id>] [--flag <id>]"],
     run: cmdLoadout,

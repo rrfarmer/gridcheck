@@ -44,15 +44,25 @@ const LOADOUT_INTO_EXPORTS = Object.freeze({
   sessions: ["services/chat/sessionRegistry", ["findSessionByCharacterID"]],
 });
 
+// What removing the wreck an in-space swap leaves needs. A tree without it
+// keeps the wreck and says so.
+const LOADOUT_WRECK_EXPORTS = Object.freeze({
+  wreckRuntime: ["space/runtime", ["destroyDynamicInventoryEntity"]],
+});
+
+// The fighter bay (flagFighterBay, inventorycommon.const).
+const FIGHTER_BAY_FLAG = 158;
+
 // Hangar divisions of a corporation office: flagCorpSAG1 through flagCorpSAG7.
 const FIRST_DIVISION_FLAG = 115;
 const LAST_DIVISION_FLAG = 121;
 
 // Inventory categories a loadout list may name.
-const CATEGORY = Object.freeze({ ship: 6, module: 7, charge: 8, drone: 18, subsystem: 32 });
+const CATEGORY = Object.freeze({ ship: 6, module: 7, charge: 8, drone: 18, subsystem: 32, fighter: 87 });
 const LIST_CATEGORIES = Object.freeze({
   modules: [CATEGORY.module, CATEGORY.subsystem],
   drones: [CATEGORY.drone],
+  fighters: [CATEGORY.fighter],
   charges: [CATEGORY.charge],
   cargo: null,
 });
@@ -81,6 +91,7 @@ function loadModuleTable(table, load) {
 
 const loadLoadoutModules = (load) => loadModuleTable(LOADOUT_EXPORTS, load);
 const loadIntoModules = (load) => loadModuleTable(LOADOUT_INTO_EXPORTS, load);
+const loadWreckModules = (load) => loadModuleTable(LOADOUT_WRECK_EXPORTS, load);
 
 function failure(statusCode, error, extra = {}) {
   return { statusCode, body: { ok: false, error, ...extra } };
@@ -251,11 +262,11 @@ function createLoadout(m, { intoMissing = [] } = {}) {
     const characterID = toInt(session.characterID);
 
     const unknown = [];
-    const resolved = { modules: [], drones: [], cargo: [], charges: [] };
+    const resolved = { modules: [], drones: [], fighters: [], cargo: [], charges: [] };
     const ship = resolve("ship", spec.ship);
     if (ship.problem) unknown.push(ship.problem);
     for (const list of Object.keys(resolved)) {
-      for (const entry of spec[list]) {
+      for (const entry of spec[list] || []) {
         const found = resolve(list, entry.name);
         if (found.problem) unknown.push(found.problem);
         else resolved[list].push({ type: found.type, quantity: entry.quantity });
@@ -273,6 +284,7 @@ function createLoadout(m, { intoMissing = [] } = {}) {
     }
 
     const flown = [ship.type, ...resolved.modules.map((entry) => entry.type), ...resolved.drones.map((entry) => entry.type),
+      ...resolved.fighters.map((entry) => entry.type),
       ...resolved.charges.map((entry) => entry.type)];
     const skills = missingSkills(characterID, flown);
     if (skills.missing.length) {
@@ -305,7 +317,7 @@ function createLoadout(m, { intoMissing = [] } = {}) {
     done.push(`made ${ship.type.name} ${shipItem.itemID} in ${locationID}`);
     const stopped = (error) => failure(500, error, { done, shipID: shipItem.itemID });
 
-    const grants = [...resolved.modules, ...resolved.drones, ...resolved.cargo]
+    const grants = [...resolved.modules, ...resolved.drones, ...resolved.fighters, ...resolved.cargo]
       .map((entry) => ({ itemType: entry.type, quantity: entry.quantity }));
     if (grants.length) {
       const granted = m.itemStore.grantItemsToCharacterStationHangar(characterID, locationID, grants);
@@ -327,6 +339,16 @@ function createLoadout(m, { intoMissing = [] } = {}) {
         if (!moved || !moved.success) return stopped(`${entry.type.name} x${entry.quantity}: ${(moved && moved.errorMsg) || "MOVE_FAILED"}`);
         done.push(`${list === "drones" ? "drone bay" : "cargo"} ${entry.type.name} x${entry.quantity}`);
       }
+    }
+
+    // Fighters go to the fighter bay as one stack per type, as a player drags a
+    // squadron in; the pilot loads tubes from it (fighters.LoadFightersToTube).
+    for (const entry of resolved.fighters) {
+      const moved = m.itemStore.moveItemTypeFromCharacterLocation(characterID, locationID, ITEM_FLAGS.HANGAR, shipItem.itemID,
+        FIGHTER_BAY_FLAG, entry.type.typeID, entry.quantity);
+      if (!moved || !moved.success) return stopped(`${entry.type.name} x${entry.quantity}: ${(moved && moved.errorMsg) || "MOVE_FAILED"}`);
+      if (sync) syncChanges(session, moved.data && moved.data.changes);
+      done.push(`fighter bay ${entry.type.name} x${entry.quantity}`);
     }
 
     // A full clip in every fitted module that takes a listed charge; stock's
@@ -363,6 +385,7 @@ function createLoadout(m, { intoMissing = [] } = {}) {
     }
 
     let replacedShipID = null;
+    let wreck = null;
     if (placement) {
       // Built in the character's hangar, where stock's fitting helpers work,
       // then moved whole. reownContents hands the fitted modules, charges,
@@ -396,6 +419,20 @@ function createLoadout(m, { intoMissing = [] } = {}) {
       if (!boarded || !boarded.success) return stopped(`made it, but the swap in space failed: ${(boarded && boarded.errorMsg) || "SPACE_SWAP_FAILED"}`);
       const destroyed = boarded.data && boarded.data.destroyResult;
       replacedShipID = destroyed && toInt(destroyed.destroyedShipID) ? toInt(destroyed.destroyedShipID) : null;
+      // The server's in-space board destroys the old hull with a wreck holding
+      // its fit (spaceShipSwapRuntime destroyAbandonedShipForSwap). A test
+      // grid fills with them, so remove it, contents and all, unless asked not to.
+      const wreckID = destroyed && destroyed.wreck ? toInt(destroyed.wreck.itemID) : 0;
+      if (wreckID) {
+        wreck = { itemID: wreckID, removed: false };
+        if (spec.keepWreck) wreck.why = "keepWreck";
+        else if (!m.wreckRuntime) wreck.why = "this tree has no space/runtime destroyDynamicInventoryEntity";
+        else {
+          const cleared = m.wreckRuntime.destroyDynamicInventoryEntity(systemID, wreckID, { reason: "gridcheck-loadout-wreck" });
+          if (cleared && cleared.success) wreck.removed = true;
+          else wreck.why = (cleared && cleared.errorMsg) || "WRECK_REMOVE_FAILED";
+        }
+      }
     }
 
     const typeName = (typeID) => {
@@ -412,6 +449,7 @@ function createLoadout(m, { intoMissing = [] } = {}) {
         systemID: !placement && !docked ? systemID : null,
         stagedIn: locationID,
         replacedShipID,
+        ...(wreck ? { wreck } : {}),
         ...(placement ? { placed: {
           kind: placement.kind, locationID: placement.locationID, ownerID: placement.ownerID, flagID: placement.flagID,
           stationID: placement.stationID, description: placement.description,
@@ -426,6 +464,7 @@ function createLoadout(m, { intoMissing = [] } = {}) {
           };
         }),
         drones: resolved.drones.map((entry) => ({ typeID: toInt(entry.type.typeID), name: String(entry.type.name), quantity: entry.quantity })),
+        fighters: resolved.fighters.map((entry) => ({ typeID: toInt(entry.type.typeID), name: String(entry.type.name), quantity: entry.quantity })),
         cargo: resolved.cargo.map((entry) => ({ typeID: toInt(entry.type.typeID), name: String(entry.type.name), quantity: entry.quantity })),
         skillsChecked: skills.checked,
         ...(plan.resources ? {
@@ -442,8 +481,10 @@ module.exports = {
   CATEGORY,
   LOADOUT_EXPORTS,
   LOADOUT_INTO_EXPORTS,
+  LOADOUT_WRECK_EXPORTS,
   createLoadout,
   loadIntoModules,
   loadLoadoutModules,
   loadModuleTable,
+  loadWreckModules,
 };

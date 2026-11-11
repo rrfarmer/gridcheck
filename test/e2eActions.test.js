@@ -11,6 +11,7 @@ const { needsPlugin } = require("./tree");
 const {
   actionFromArgs,
   parseTargetSpec,
+  pickHoldItems,
   pickModules,
   pickTarget,
   runAction,
@@ -100,6 +101,12 @@ test("the ship's listing becomes slots, cargo and drone bay, and modules are pic
   assert.throws(() => pickModules(ITEMS, "name~Laser"), /no fitted module matches "name~Laser"; fitted: low Damage Control I \(11\)/);
 });
 
+test("a quoted name~ or group~ value matches a name with spaces, as target terms do", () => {
+  assert.deepStrictEqual(pickModules(ITEMS, 'name~"Damage Control"').map((item) => item.itemID), [11]);
+  assert.deepStrictEqual(pickHoldItems(ITEMS, "cargo", 'name~"EMP S"').map((item) => item.itemID), [16]);
+  assert.deepStrictEqual(pickHoldItems(ITEMS, "cargo", '"EMP S"').map((item) => item.itemID), [16]);
+});
+
 test("a listing wrapped in a set, as EveJS 261018.1 answers ListByFlags, reads the same as a plain list", () => {
   const asSet = { type: "objectex1", header: [{ type: "token", value: "__builtin__.set" }, [LISTED]], list: [], dict: [] };
   assert.deepStrictEqual(shipItems(asSet, (typeID) => TYPES.get(typeID)), ITEMS);
@@ -166,7 +173,7 @@ test("activate switches each module on at the target, and reports each refusal i
     if (method === "Activate" && args[0] !== 14) return (io.calls.push([`${service}.${method}`, args, null]), 1);
     return call(service, method, args, kwargs);
   })(io.call);
-  const named = await runAction({ type: "activate", modules: "weapons", target: "77" }, io);
+  const named = await runAction({ type: "activate", modules: "weapons", target: "77", noReload: true }, io);
   assert.deepStrictEqual(io.calls.filter(([name]) => name === "dogmaIM.Activate").map(([, args]) => args),
     [[13, "", 77, -1], [14, "", 77, -1]]);
   assert.strictEqual(named.ok, false);
@@ -177,6 +184,25 @@ test("activate switches each module on at the target, and reports each refusal i
   assert.deepStrictEqual(locked.calls.filter(([name]) => name === "dogmaIM.Activate").map(([, args]) => args), [[15, "", 77, 0]],
     "no target named: the first locked one, as a client does");
   assert.strictEqual(once.ok, true);
+});
+
+test("activate reloads an emptied module from the cargo and switches it on, as the real client does", async () => {
+  const io = fakeIO();
+  let loaded = false;
+  io.call = ((call) => async (service, method, args, kwargs) => {
+    if (method === "LoadAmmo") loaded = true;
+    if (method === "Activate" && args[0] === 14 && !loaded) {
+      io.calls.push([`${service}.${method}`, args, null]);
+      throw new Error("gateway /call: CALL_REFUSED NoCharges");
+    }
+    return call(service, method, args, kwargs);
+  })(io.call);
+  const result = await runAction({ type: "activate", modules: "weapons", target: "77" }, io);
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(io.calls.filter(([name]) => name === "dogmaIM.LoadAmmo").map(([, args]) => args), [[1, [14], [16], 1]],
+    "the cargo stack is loaded into the emptied gun only");
+  assert.deepStrictEqual(io.calls.filter(([name]) => name === "dogmaIM.Activate").map(([, args]) => args[0]), [13, 14, 14]);
+  assert.match(result.text, /2 of 2 module\(s\) on.*; reloaded first: 200mm AutoCannon I \(high 14\) from EMP S$/);
 });
 
 test("deactivate names propulsion effects and takes an already-off module as done", async () => {

@@ -5,6 +5,7 @@
 //   { "ship": "Tristan",
 //     "modules": ["Light Neutron Blaster II x2", "1MN Afterburner II"],
 //     "drones": ["Hobgoblin II x5"],
+//     "fighters": ["Templar I x9"],
 //     "cargo": ["Antimatter Charge S x400"],
 //     "charges": ["Antimatter Charge S"] }
 //
@@ -17,10 +18,17 @@
 // Three more keys say where it goes when it isn't boarded: "into" (a station
 // or a corporation office, by ID), and with it "owner" and "flag". Leave
 // `into` out and the character boards the ship.
+//
+// "fighters" go in the fighter bay (a carrier's or a supercarrier's), whole
+// squadrons by count; the pilot loads them into tubes the way a player does.
+// "keepWreck": true keeps the wreck a swap in space leaves of the old ship
+// (the server's in-space board destroys it with a wreck); by default the
+// wreck and its loot are removed, so a test grid doesn't fill with them.
 
-const LISTS = Object.freeze(["modules", "drones", "cargo", "charges"]);
+const LISTS = Object.freeze(["modules", "drones", "fighters", "cargo", "charges"]);
 const PLACEMENT = Object.freeze(["into", "owner", "flag"]);
-const KEYS = Object.freeze(["ship", ...LISTS, ...PLACEMENT]);
+const OPTIONS = Object.freeze(["keepWreck"]);
+const KEYS = Object.freeze(["ship", ...LISTS, ...PLACEMENT, ...OPTIONS]);
 const MAX_QUANTITY = 1_000_000;
 const COUNT = /^(.*?)\s+x(\d+)$/i;
 
@@ -46,7 +54,7 @@ function splitList(text) {
 // quantities added up, in the order first named.
 function normalizeLoadout(raw) {
   const problems = [];
-  if (!isObject(raw)) return { loadout: null, problems: ["a loadout is an object: { ship, modules, drones, cargo, charges }"] };
+  if (!isObject(raw)) return { loadout: null, problems: ["a loadout is an object: { ship, modules, drones, fighters, cargo, charges }"] };
   for (const key of Object.keys(raw)) {
     if (!KEYS.includes(key)) problems.push(`${key}: unknown key; a loadout has ${KEYS.join(", ")}`);
   }
@@ -88,6 +96,11 @@ function normalizeLoadout(raw) {
     if (!(Number.isSafeInteger(id) && id > 0)) problems.push(`${key}: an ID, a whole number above 0`);
     else loadout[key] = id;
   }
+  if (raw.keepWreck !== undefined && raw.keepWreck !== null) {
+    const value = raw.keepWreck === "true" ? true : raw.keepWreck === "false" ? false : raw.keepWreck;
+    if (typeof value !== "boolean") problems.push("keepWreck: true or false");
+    else if (value) loadout.keepWreck = true;
+  }
   if (!loadout.into && (loadout.owner || loadout.flag) && !problems.some((line) => line.startsWith("into:"))) {
     problems.push("owner and flag say where `into` leaves the ship; give into too");
   }
@@ -100,6 +113,7 @@ function loadoutBody(loadout) {
   const body = { ship: loadout.ship };
   for (const key of LISTS) if (loadout[key].length) body[key] = loadout[key].map(entry);
   for (const key of PLACEMENT) if (loadout[key]) body[key] = loadout[key];
+  if (loadout.keepWreck) body.keepWreck = true;
   return body;
 }
 
@@ -108,6 +122,7 @@ function describeLoadout(loadout) {
   const parts = [];
   if (loadout.modules.length) parts.push(`${count(loadout.modules)} module(s)`);
   if (loadout.drones.length) parts.push(`${count(loadout.drones)} drone(s)`);
+  if (loadout.fighters.length) parts.push(`${count(loadout.fighters)} fighter(s)`);
   if (loadout.charges.length) parts.push(`${loadout.charges.map((entry) => entry.name).join(", ")} loaded`);
   if (loadout.cargo.length) parts.push(`${loadout.cargo.length} cargo stack(s)`);
   return `loadout ${loadout.ship}${loadout.into ? ` into ${loadout.into}` : ""}${parts.length ? `: ${parts.join(", ")}` : ""}`;
@@ -120,12 +135,14 @@ function formatLoadoutReply(reply) {
     if (reply.placed) lines.push(`built ${reply.ship.name} ${reply.ship.itemID} in ${reply.placed.description}; not boarded`);
     else {
       lines.push(`boarded ${reply.ship.name} ${reply.ship.itemID} ${reply.docked ? `docked in ${reply.locationID}` : `in space, system ${reply.systemID}`}` +
-        `${reply.replacedShipID ? `; the old ship ${reply.replacedShipID} was removed` : ""}`);
+        `${reply.replacedShipID ? `; the old ship ${reply.replacedShipID} was removed` : ""}` +
+        `${reply.wreck ? (reply.wreck.removed ? `, its wreck ${reply.wreck.itemID} cleared` : `, its wreck ${reply.wreck.itemID} left${reply.wreck.why ? ` (${reply.wreck.why})` : ""}`) : ""}`);
     }
     for (const module of reply.modules || []) {
       lines.push(`  ${String(module.slot || "slot").padEnd(5)} ${module.name}${module.charge ? ` (${module.charge.name} x${module.charge.quantity})` : ""}`);
     }
     for (const drone of reply.drones || []) lines.push(`  drone ${drone.name} x${drone.quantity}`);
+    for (const fighter of reply.fighters || []) lines.push(`  fighter bay ${fighter.name} x${fighter.quantity}`);
     for (const stack of reply.cargo || []) lines.push(`  cargo ${stack.name} x${stack.quantity}`);
     lines.push(`  skills: ${reply.skillsChecked} requirement(s) checked, all met`);
     if (reply.resources) {
@@ -150,6 +167,7 @@ function formatLoadoutReply(reply) {
 module.exports = {
   KEYS,
   LISTS,
+  OPTIONS,
   PLACEMENT,
   isObject,
   describeLoadout,

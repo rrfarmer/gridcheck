@@ -62,7 +62,7 @@ const ACTION_STEP_KEYS = (type) => {
   const spec = actionTools.ACTIONS[type];
   return [type, "as", "retry",
     ...(spec.target === "optional" ? ["target"] : []),
-    ...["range", "once", "timeout", "charge", "count"].filter((key) => spec[key] !== undefined)];
+    ...["range", "once", "noReload", "timeout", "charge", "count"].filter((key) => spec[key] !== undefined)];
 };
 const CORE_STEP_KEYS = {
   login: ["login"],
@@ -829,6 +829,7 @@ function validateScenario(raw, { source = "scenario", defaultName = null, worldE
           if (rawStep.target !== undefined) action.target = String(rawStep.target);
           for (const key of ["range", "timeout", "count"]) if (rawStep[key] !== undefined) action[key] = rawStep[key];
           if (rawStep.once !== undefined) action.once = rawStep.once === true;
+          if (rawStep.noReload !== undefined) action.noReload = rawStep.noReload === true;
           if (rawStep.charge !== undefined) action.charge = String(rawStep.charge);
           try {
             actionTools.checkAction(action);

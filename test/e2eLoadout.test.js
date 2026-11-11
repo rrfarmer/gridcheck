@@ -24,6 +24,7 @@ const TYPES = [
   { typeID: 438, name: "1MN Afterburner II", categoryID: 7 },
   { typeID: 2456, name: "Hobgoblin II", categoryID: 18 },
   { typeID: 230, name: "Antimatter Charge S", categoryID: 8 },
+  { typeID: 40345, name: "Scarab I", categoryID: 87 },
   { typeID: 3436, name: "Drones", categoryID: 16 },
   { typeID: 3302, name: "Small Hybrid Turret", categoryID: 16 },
   { typeID: 3328, name: "Gallente Frigate", categoryID: 16 },
@@ -286,4 +287,42 @@ test("a scenario's loadout step is checked when the scenario is, and reads back 
   ]);
   assert.throws(() => validateScenario({ ...base, setup: [{ loadout: { ship: "Tristan", charges: ["Antimatter Charge S x9"] } }] }, { registry }),
     /setup\[0\]\.loadout: charges\[0\]: a charge fills every module/);
+});
+
+test("fighters go to the fighter bay, and a swap in space clears the old ship's wreck unless keepWreck", () => {
+  const { loadout } = normalizeLoadout({ ship: "Tristan", fighters: ["Scarab I x3"], keepWreck: true });
+  assert.deepStrictEqual([loadout.fighters, loadout.keepWreck], [[{ name: "Scarab I", quantity: 3 }], true]);
+  assert.deepStrictEqual(loadoutBody(loadout), { ship: "Tristan", fighters: ["Scarab I x3"], keepWreck: true });
+  assert.match(normalizeLoadout({ ship: "Tristan", keepWreck: "yes" }).problems.join(), /keepWreck: true or false/);
+  assert.match(normalizeLoadout({ ship: "Tristan", fighters: ["Hobgoblin II"] }).problems.join() || "ok", /ok/,
+    "the category is the bridge's to check, by the item's own data");
+
+  const build = (spec, withWreckRuntime = true) => {
+    const { m, calls } = fakeStock({ docked: false });
+    m.shipRuntime.boardPreparedShipInSpace = (_session, ship) => {
+      calls.push(["board in space", ship.itemID]);
+      return { success: true, data: { destroyResult: { destroyedShipID: 777, wreck: { itemID: 5555 } } } };
+    };
+    if (withWreckRuntime) {
+      m.wreckRuntime = { destroyDynamicInventoryEntity: (systemID, itemID) => (calls.push(["clear wreck", systemID, itemID]), { success: true }) };
+    }
+    return { reply: createLoadout(m)(SESSION_IN_SPACE, spec), calls };
+  };
+  const cleared = build({ ship: "Tristan", fighters: ["Scarab I x3"] });
+  assert.strictEqual(cleared.reply.statusCode, 200);
+  assert.deepStrictEqual(cleared.calls.filter(([what]) => what === "load" || what === "clear wreck"),
+    [["load", 1001, 158, "Scarab I", 3], ["clear wreck", 30002537, 5555]]);
+  assert.deepStrictEqual(cleared.reply.body.wreck, { itemID: 5555, removed: true });
+  assert.deepStrictEqual(cleared.reply.body.fighters, [{ typeID: 40345, name: "Scarab I", quantity: 3 }]);
+  assert.match(formatLoadoutReply(cleared.reply.body), /the old ship 777 was removed, its wreck 5555 cleared[\s\S]*fighter bay Scarab I x3/);
+
+  const kept = build({ ship: "Tristan", keepWreck: true });
+  assert.deepStrictEqual(kept.reply.body.wreck, { itemID: 5555, removed: false, why: "keepWreck" });
+  assert.ok(!kept.calls.some(([what]) => what === "clear wreck"));
+  const oldTree = build({ ship: "Tristan" }, false);
+  assert.match(oldTree.reply.body.wreck.why, /no space\/runtime destroyDynamicInventoryEntity/);
+
+  const notFighter = createLoadout(fakeStock().m)(SESSION_DOCKED, { ship: "Tristan", fighters: ["Hobgoblin II"] });
+  assert.strictEqual(notFighter.statusCode, 409);
+  assert.match(JSON.stringify(notFighter.body.unknown), /Hobgoblin II is not a fighter/);
 });
