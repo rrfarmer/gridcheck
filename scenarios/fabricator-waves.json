@@ -56,8 +56,8 @@
         }
       ],
       "every": 1,
-      "times": 8,
-      "note": "up to about 37 minutes (a run fits in 3000 s); a slower fight needs a stronger hull"
+      "times": 7,
+      "note": "up to about 33 minutes (a run fits in 3000 s); a slower fight needs a stronger hull"
     },
     {
       "clientEval": "fab_step_result()",

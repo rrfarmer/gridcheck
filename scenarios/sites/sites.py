@@ -114,8 +114,10 @@ def site_dungeon():
 
 
 def site_drones_out():
+    # The drones this ship controls (michelle's drone state), not every drone the pilot owns:
+    # drones left behind by a lost ship stay owned but take no orders.
     bp = site_bp()
-    return [i for i, s in bp.slimItems.items() if s.categoryID == const.categoryDrone and getattr(s, 'ownerID', 0) == session.charid]
+    return [i for i in sm.GetService('michelle').GetDrones().keys() if i in bp.slimItems]
 
 
 def site_restock_drones(count=10):
@@ -192,9 +194,9 @@ def site_kill(targetID, timeout_ms=90000, modules=('Stasis Webifier',)):
     site_sleep(1500)
     site_answer_yes()
     end = blue.os.GetWallclockTime() + timeout_ms * 10000
-    while blue.os.GetWallclockTime() < end and targetID in site_bp().balls:
+    while blue.os.GetWallclockTime() < end and targetID in site_bp().slimItems:
         site_sleep(1000)
-    return targetID not in site_bp().balls
+    return targetID not in site_bp().slimItems
 
 
 TANK_PREFIXES = ('Medium Armor Repairer', 'Large Armor Repairer', 'Small Armor Repairer', 'Multispectrum',
@@ -405,3 +407,165 @@ def fab_step_result():
     if FAB_RUN['error']:
         raise AssertionError(FAB_RUN['error'])
     return FAB_RUN['done'] and FAB_RUN['result'] is True
+
+
+# ---------- Observatory Flashpoint (EvEJS PR 388) ----------
+
+def fp_values():
+    d = site_dungeon()
+    return d and d['values']
+
+
+def fp_gm_destroy(itemID):
+    # gridutils' GM destroy (/heal <id> 0): the server's normal destruction owner, so the
+    # Flashpoint's own kill hook still decides (and refuses an invulnerable role).
+    return site_slash('/heal %d 0' % itemID)
+
+
+def fp_hostiles(include=None, exclude=()):
+    rows = site_npcs(exclude=exclude)
+    if include:
+        rows = [row for row in rows if any(part in row[2] for part in include)]
+    return rows
+
+
+def fp_clear(include=None, exclude=(), real=1, timeout_ms=600000):
+    # Kill the first `real` hostiles with drones, then GM-destroy the rest one by one; answer
+    # what each did. A refused destroy (an invulnerable role) is recorded, not retried.
+    record = []
+    refused = set()
+    end = blue.os.GetWallclockTime() + timeout_ms * 10000
+    while blue.os.GetWallclockTime() < end:
+        rows = [row for row in fp_hostiles(include, exclude) if row[1] not in refused]
+        if not rows:
+            return record
+        distance, itemID, name, slim = rows[0]
+        if real > 0:
+            site_tank()
+            ok = site_kill(itemID, 240000)
+            record.append((name, 'drones', ok))
+            real -= 1
+            continue
+        reply = fp_gm_destroy(itemID)
+        try:
+            gone = site_wait(lambda: itemID not in site_bp().slimItems, 8000)
+        except AssertionError:
+            gone = False
+        record.append((name, 'gm', gone, None if gone else str(reply)[:120]))
+        if not gone:
+            refused.add(itemID)
+    raise AssertionError('not cleared: %r' % record)
+
+
+def fp_gate():
+    rows = [row for row in site_entities() if 'Conduit' in row[2] or row[3].groupID == const.groupWarpGate]
+    return rows[0][1] if rows else None
+
+
+def fp_take_gate(timeout_ms=120000):
+    from eve.client.script.ui.services.menuSvcExtras import movementFunctions
+    gate = fp_gate()
+    if not gate:
+        raise AssertionError('no gate on grid')
+    before = site_bp().GetBall(session.shipid)
+    uthread.new(sm.GetService('menu').ActivateAccelerationGate, gate)
+    site_sleep(5000)
+    site_wait(lambda: site_bp().GetBall(session.shipid).mode != 3 and fp_gate() != gate, timeout_ms, 2000)
+    site_sleep(5000)
+    return True
+
+
+def fp_roles():
+    # What is on grid now, by name, with health (the panel shows no slot roles).
+    out = {}
+    for distance, itemID, name, slim in site_entities():
+        if slim.categoryID in (const.categoryEntity, const.categoryStructure, const.categoryStarbase, const.categoryDeployable) or 'Pylon' in name or 'Observatory' in name:
+            out.setdefault(name, []).append((int(distance), itemID, [round(x, 3) for x in site_bp().GetDamageState(itemID)[:3]] if site_bp().GetDamageState(itemID) else None))
+    return out
+
+
+def fp_site_id(systemID):
+    # EvEJS numbers regional Flashpoints 85000000000NN; take the one in this system from the
+    # sensor suite (it lists them as signatures before scanning).
+    sites = [s.siteID for s in sm.GetService('sensorSuite').siteController.GetVisibleSites() if str(s.siteID).startswith('850000000')]
+    if not sites:
+        raise AssertionError('no Flashpoint visible in %d' % systemID)
+    return min(sites)
+
+
+def fp_step_lobby(systemID, typeName='Ishtar'):
+    # Board, fly in, clear the gate camp (GM), warp to the site: the lobby panel, the gate
+    # unlocks once the Triglavian lobby wave is dead (one by drones, the rest GM-destroyed).
+    site_board_type(typeName)
+    site_undock()
+    site_goto_system(systemID)
+    for row in site_npcs():
+        if row[0] < 150000:
+            fp_gm_destroy(row[1])
+    site_warp_to(fp_site_id(systemID))
+    site_guard(True)
+    site_tank()
+    objectives = site_wait(lambda: (fp_values() or {}).get('objectives'), 30000)
+    fp_clear(include=('Liminal',), real=1, timeout_ms=280000)
+    return 'lobby_activate_gate' in objectives
+
+
+def fp_step_pocket():
+    # Gate into the pocket; the Werpost and the Observatory refuse destruction in phase 1;
+    # the guards die (GM) and phase 2 brings the enemy dreadnought with the siege timer.
+    g = fp_gate()
+    uthread.new(sm.GetService('menu').ActivateAccelerationGate, g)
+    site_wait(lambda: g not in site_bp().slimItems, 250000, 2000)
+    site_wait(lambda: site_bp().GetBall(session.shipid).mode != 3, 60000, 2000)
+    site_wait(lambda: (fp_values() or {}).get('dungeon_state') == 'Phase 1', 30000)
+    roles = fp_roles()
+    refused = [str(fp_gm_destroy(roles[name][0][1])) for name in ('Threshold Werpost', 'CONCORD Stellar Observatory')]
+    if not all('FLASHPOINT_INVULNERABLE' in reply for reply in refused):
+        raise AssertionError('phase 1 destroy not refused: %r' % refused)
+    site_repair()
+    fp_clear(include=('Navy',), real=0, timeout_ms=250000)
+    values = site_wait(lambda: (fp_values() or {}).get('dungeon_state') == 'Phase 2' and fp_values(), 30000)
+    return values.get('enemy_dread_on_grid') == 1 and values.get('siege_counter') is not None
+
+
+def fp_step_observatory():
+    # The dreadnought dies (GM) -> phase 3 with subpylons; at a subpylon the counter reads 1
+    # and the client gets the Damage Bonus dbuff (2103); drones damage the Observatory.
+    from eve.client.script.ui.services.menuSvcExtras import droneFunctions, movementFunctions
+    dread = fp_values()['enemy_dread']['item_id']
+    fp_gm_destroy(dread)
+    site_wait(lambda: (fp_values() or {}).get('dungeon_state') == 'Phase 3', 30000)
+    fp_clear(include=('Navy',), real=0, timeout_ms=200000)
+    pylon = [row for row in site_entities() if 'Subpylon' in row[2]][0][1]
+    movementFunctions.KeepAtRange(pylon, 1000)
+    site_wait(lambda: (fp_values() or {}).get('subpylon_counter') == 1, 250000, 2000)
+    dbuffs = dict(sm.GetService('dbuffClient').incomingDbuffTracker.incomingDbuffs)
+    observatory = fp_values()['structure']['item_id']
+    uthread.new(droneFunctions.EngageTarget, site_launch_drones())
+    site_sleep(2000)
+    site_answer_yes()
+    before = site_bp().GetDamageState(observatory)[0]
+    site_sleep(40000)
+    after = site_bp().GetDamageState(observatory)[0]
+    if 2103 not in dbuffs or not after < before:
+        raise AssertionError('dbuffs %r, observatory shield %r -> %r' % (dbuffs, before, after))
+    return True
+
+
+def fp_step_complete():
+    # A subpylon and the Observatory die (GM): "Success", the reward pays the pilot and the
+    # Observatory wreck holds Stellar Surveillance Data.
+    from eve.client.script.ui.services.menuSvcExtras import movementFunctions
+    pylon = [row for row in site_entities() if 'Subpylon' in row[2]][0][1]
+    fp_gm_destroy(pylon)
+    site_wait(lambda: (fp_values() or {}).get('subpylons_destroyed') == 1, 20000)
+    wealth = sm.GetService('wallet').GetWealth()
+    fp_gm_destroy(fp_values()['structure']['item_id'])
+    site_wait(lambda: (fp_values() or {}).get('dungeon_state') == 'Success', 30000)
+    site_wait(lambda: sm.GetService('wallet').GetWealth() > wealth, 30000)
+    wreck = site_wait(lambda: [row[1] for row in site_entities() if row[2] == 'CONCORD Stellar Observatory Wreck'], 30000)[0]
+    movementFunctions.KeepAtRange(wreck, 1000)
+    site_wait(lambda: site_bp().DistanceBetween(session.shipid, wreck) < 2400, 200000, 2000)
+    loot = [evetypes.GetName(i.typeID) for i in sm.GetService('invCache').GetInventoryFromId(wreck).List()]
+    site_guard(False)
+    return 'Stellar Surveillance Data' in loot

@@ -1,0 +1,18 @@
+{
+  "description": "Pochven Observatory Flashpoint (EvEJS PR 388) in a real EVE client, start to finish. Lobby: the panel offers the gate, which opens once the Triglavian lobby wave is dead (one by drones). Pocket phase 1: a Threshold Werpost and the Stellar Observatory refuse destruction (FLASHPOINT_INVULNERABLE); the navy guards die. Phase 2: the enemy dreadnought with the siege timer. Phase 3: subpylons, the counter reads 1 at one, the client gets the Damage Bonus dbuff, drones damage the Observatory. Destroying it gives Success, pays the pilot and leaves Stellar Surveillance Data in its wreck. Heavy targets die by the client GM destroy (/heal <id> 0, the server's normal destruction owner, so the site still refuses invulnerable roles); survival is GM help. Needs the client-agent patch and an untouched Flashpoint in Arvasaras (30001445). Driver: sites/sites.py.",
+  "world": "fresh",
+  "setup": [
+    { "loadout": { "ship": "Ishtar", "modules": ["Medium Armor Repairer II x2", "Damage Control II", "Multispectrum Energized Membrane II", "Drone Damage Amplifier II", "Stasis Webifier II", "Omnidirectional Tracking Link II", "10MN Afterburner II"], "drones": ["Hobgoblin II x5", "Hammerhead II x5"], "into": 60003760, "owner": 140000006 } },
+    { "clientLaunch": { "user": "e2eclient" } },
+    { "clientEval": { "file": "sites/sites.py" }, "timeout": 30 },
+    { "clientEval": "fp_step_lobby(30001445)", "assert": true, "timeout": 300 },
+    { "clientEval": "fp_step_pocket()", "assert": true, "timeout": 300 },
+    { "clientEval": "fp_step_observatory()", "assert": true, "timeout": 300 },
+    { "clientEval": "fp_step_complete()", "assert": true, "timeout": 300 }
+  ],
+  "until": { "any": ["CLIENT_EXCEPTION"], "timeout": 5, "grace": 2 },
+  "expect": [
+    { "match": "no CLIENT_EXCEPTION where~dungeonTracking", "note": "the objective panel raised nothing" },
+    { "match": "no CLIENT_EXCEPTION where~dbuff", "note": "nor the buff bar" }
+  ]
+}
