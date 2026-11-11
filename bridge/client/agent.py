@@ -1519,9 +1519,10 @@ class Agent(object):
                 if target is None or not selects(target, target_path):
                     continue
             found.append((node, where, above))
-        # A button and its own label both match its text; the outermost stands for both.
-        matched = set(id(node) for node, _here, _chain in found)
-        found = [row for row in found if not any(id(up) in matched for up in row[2])]
+        # For a click, keep only matches that lead to a node taking it, one per target, before
+        # the outermost rule below: a message box's ButtonGroup holds the text of all its buttons
+        # ("Yes" and "No"), takes no click itself, and as the outermost match it used to hide the
+        # Yes button inside it ("neither ... ButtonGroup nor a node above it has OnClick").
         if handler is not None:
             takers = []
             targets = set()
@@ -1531,6 +1532,9 @@ class Agent(object):
                     targets.add(id(target))
                     takers.append(row)
             found = takers or found
+        # A button and its own label both match its text; the outermost stands for both.
+        matched = set(id(node) for node, _here, _chain in found)
+        found = [row for row in found if not any(id(up) in matched for up in row[2])]
         index = args.get('index')
         if index is not None:
             index = bounded(index, -1, 0, 100000)
