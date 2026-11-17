@@ -275,8 +275,9 @@ function readItems(file, query, { typeName = () => null } = {}) {
   if (!fs.existsSync(file)) return { ok: false, error: `no game store at ${file}` };
   const db = openDatabase(file, { readOnly: true });
   try {
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items'").get()) {
-      return { ok: false, error: `${file} has no items table; is it a game store?` };
+    const storage = db.prepare("SELECT type FROM sqlite_schema WHERE type IN ('table', 'view') AND name = 'items'").get();
+    if (!storage) {
+      return { ok: false, error: `${file} has no items table or view; is it a game store?` };
     }
     const parse = (row) => {
       try {
@@ -285,9 +286,11 @@ function readItems(file, query, { typeName = () => null } = {}) {
         return null;
       }
     };
-    const inLocation = db.prepare("SELECT json FROM items WHERE json_extract(json, '$.locationID') = ?");
+    // The shared view also projects inventory receipts. Only numeric keys are items.
+    const itemFilter = storage.type === "view" ? "key GLOB '[1-9]*' AND key NOT GLOB '*[^0-9]*' AND " : "";
+    const inLocation = db.prepare(`SELECT json FROM items WHERE ${itemFilter}json_extract(json, '$.locationID') = ?`);
     const byKey = db.prepare("SELECT json FROM items WHERE key = ?");
-    const byField = db.prepare("SELECT json FROM items WHERE json_extract(json, '$.itemID') = ?");
+    const byField = db.prepare(`SELECT json FROM items WHERE ${itemFilter}json_extract(json, '$.itemID') = ?`);
     return runItemsQuery({
       item: (id) => {
         const row = byKey.get(String(id)) || byField.get(id);
@@ -301,7 +304,7 @@ function readItems(file, query, { typeName = () => null } = {}) {
           const chunk = ids.slice(start, start + 500);
           const rows = db.prepare(
             "SELECT json_extract(json, '$.locationID') AS location, COUNT(*) AS n FROM items " +
-            `WHERE json_extract(json, '$.locationID') IN (${chunk.map(() => "?").join(",")}) GROUP BY location`,
+            `WHERE ${itemFilter}json_extract(json, '$.locationID') IN (${chunk.map(() => "?").join(",")}) GROUP BY location`,
           ).all(...chunk);
           for (const row of rows) counts.set(Number(row.location), Number(row.n));
         }

@@ -40,7 +40,7 @@ const ITEMS = [
   item(2002, 593, CORP, OFFICE, 116),
 ];
 
-function makeStore(dir) {
+function makeStore(dir, { shared = false } = {}) {
   const { DatabaseSync } = require("node:sqlite");
   const file = path.join(dir, "gamestore.sqlite");
   const db = new DatabaseSync(file);
@@ -48,14 +48,18 @@ function makeStore(dir) {
   db.exec("CREATE TABLE characters (key TEXT PRIMARY KEY, json TEXT NOT NULL)");
   const insert = db.prepare("INSERT INTO items(key, json) VALUES (?, ?)");
   for (const row of ITEMS) insert.run(String(row.itemID), JSON.stringify(row));
+  if (shared) {
+    insert.run("receipt:grant", JSON.stringify({ ...ITEMS[0], itemID: 9999, locationID: 1001 }));
+    db.exec("ALTER TABLE items RENAME TO inventory_records; CREATE VIEW items AS SELECT key, json FROM inventory_records");
+  }
   db.close();
   return file;
 }
 
-function withStore(run) {
+function withStore(run, options) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "world-items-"));
   try {
-    return run(makeStore(dir), dir);
+    return run(makeStore(dir, options), dir);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -109,6 +113,12 @@ test("--item shows the item and what's directly inside it, by slot", () => withS
   assert.deepStrictEqual(ask(file, { item: 1001, flag: 87 }).rows.map((row) => row.itemID), [1004], "filters narrow the contents");
   assert.deepStrictEqual(readItems(file, parseQuery({ item: 4242 }).query, { typeName }), { ok: false, error: "no item 4242" });
 }));
+
+test("the shared items view lists and counts inventory without counting receipts", () => withStore((file) => {
+  assert.strictEqual(ask(file, { location: STATION }).rows[0].contents, 3);
+  assert.deepStrictEqual(ask(file, { item: 1001 }).rows.map((row) => row.itemID), [1002, 1003, 1004]);
+  assert.deepStrictEqual(ask(file, { item: 9999 }), { ok: false, error: "no item 9999" });
+}, { shared: true }));
 
 test("the reader opens the file read-only and says plainly when there is nothing to read", () => withStore((file, dir) => {
   const before = fs.readFileSync(file);

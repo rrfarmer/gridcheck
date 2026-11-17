@@ -112,6 +112,30 @@ test("a restored world is marked as a gridcheck world and told where to resume",
   assert.equal(row.resumeAtSimMs, 123_456);
 });
 
+test("marking a shared store uses the clock view and preserves its offset", (t) => {
+  const { dir, file } = scratchWorld();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(file);
+  try {
+    db.exec(`
+      ALTER TABLE npcRuntimeState RENAME TO npc_runtime_clock;
+      CREATE VIEW npcRuntimeState AS SELECT key, json FROM npc_runtime_clock;
+      CREATE TRIGGER write_clock INSTEAD OF INSERT ON npcRuntimeState BEGIN
+        INSERT INTO npc_runtime_clock(key, json) VALUES (NEW.key, NEW.json)
+        ON CONFLICT(key) DO UPDATE SET json = excluded.json;
+      END;
+      INSERT INTO npcRuntimeState VALUES ('livingSimClock', '{"offsetMs":5000}');
+    `);
+  } finally {
+    db.close();
+  }
+  const marked = worlds.markE2eWorld(file, "shared", { resumeAtSimMs: 42_000 });
+  assert.equal(marked.offsetMs, 5000);
+  assert.equal(marked.e2eWorld, true);
+  assert.deepEqual(worlds.readSimClock(file), marked);
+});
+
 test("marking keeps an offset the world already has, and a world's time includes it", (t) => {
   const { dir, file } = scratchWorld();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

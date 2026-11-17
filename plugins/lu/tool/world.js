@@ -17,8 +17,8 @@ function openDatabase(file, options = {}) {
 }
 
 function readSimClockRow(db) {
-  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(SIM_CLOCK_TABLE);
-  if (!exists) return { exists: false, row: null };
+  const storage = db.prepare("SELECT type FROM sqlite_schema WHERE type IN ('table', 'view') AND name = ?").get(SIM_CLOCK_TABLE);
+  if (!storage) return { storage: null, row: null };
   const found = db.prepare(`SELECT json FROM "${SIM_CLOCK_TABLE}" WHERE key = ?`).get(SIM_CLOCK_KEY);
   let row = null;
   try {
@@ -26,7 +26,7 @@ function readSimClockRow(db) {
   } catch (_error) {
     row = null;
   }
-  return { exists: true, row };
+  return { storage: storage.type, row };
 }
 
 // What a world file says about its clock, read only.
@@ -62,8 +62,8 @@ function worldSimNowMs(file) {
 function markE2eWorld(file, savedWorld, { resumeAtSimMs = 0, realClock = false } = {}) {
   const db = openDatabase(file);
   try {
-    const { exists, row } = readSimClockRow(db);
-    if (!exists) return null;
+    const { storage, row } = readSimClockRow(db);
+    if (!storage) return null;
     const next = {
       offsetMs: 0,
       ...(row && typeof row === "object" ? row : {}),
@@ -73,8 +73,9 @@ function markE2eWorld(file, savedWorld, { resumeAtSimMs = 0, realClock = false }
       resumeAtSimMs: !realClock && Number(resumeAtSimMs) > 0 ? Math.round(Number(resumeAtSimMs)) : null,
       ...(realClock ? { offsetMs: 0 } : {}),
     };
-    db.prepare(`INSERT INTO "${SIM_CLOCK_TABLE}" (key, json) VALUES (?, ?) ` +
-      "ON CONFLICT(key) DO UPDATE SET json = excluded.json").run(SIM_CLOCK_KEY, JSON.stringify(next));
+    const upsert = storage === "table" ? " ON CONFLICT(key) DO UPDATE SET json = excluded.json" : "";
+    db.prepare(`INSERT INTO "${SIM_CLOCK_TABLE}" (key, json) VALUES (?, ?)${upsert}`)
+      .run(SIM_CLOCK_KEY, JSON.stringify(next));
     return next;
   } finally {
     db.close();
