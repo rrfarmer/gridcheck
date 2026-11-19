@@ -354,7 +354,53 @@ def _portal_ready():
         agent.air_portal_rebuilt = getattr(agent, 'air_portal_rebuilt', 0) + 1
         _window('careerPortal').Close(); _sleep(2000)
         uthread.new(uicore.cmd.CmdToggleAirCareerProgram); _sleep(5000)
+# 24.02 Career Program categories and the first career-agent achievement of each path
+# (nodegraph/client/conditions/achievement.py NPE_CAREER_ACHIEVEMENTS), by careerNode.
+ACHIEVEMENT_CAREERS = {
+    4: ('11786b48-9096-5848-aea7-9e285b80f707', '80474e8d-36c4-592f-b4c2-874f141a1ce9'),
+    5: ('427140cd-eb91-59e7-b365-42e282a672ce', '4d02e982-1743-5817-8fa1-dd62b93336b9'),
+    6: ('d8b3800a-6010-52d7-80e1-661e034abcf4', '51a40e9c-6ed0-5444-81b1-2df54cf89624'),
+    7: ('6d08010e-1470-5abd-b7a4-a80ac6297a08', '03291629-f2db-5598-adb7-4254fa2f3ce6'),
+}
+def _conversation_id():
+    return air_bb().get('last_shown_conversation_id')
+def _achievement_nav(cls, key):
+    w = uicore.registry.GetWindow('AchievementsWindow')
+    found = [m for m in walk(w, lambda m: m.__class__.__name__ == cls, []) if key in str(getattr(m, 'entry_id', '')) or key in getattr(m.parent, 'name', '')]
+    assert found, (cls, key)
+    uthread.new(found[0].OnClick); _sleep(3000)
+def _acp_goal_achievements():
+    # Graph 681 (2.2.04) in build 3698585: open the Career Overview in Achievements, read the four
+    # path introductions, choose a path in the side navigation (atom 746), track its career-agent
+    # achievement (atoms 747/748), use the card's Find Career Agents button, set the destination in
+    # the Agency's career agents (atom 82) and close Achievements.
+    category, achievement = ACHIEVEMENT_CAREERS[_path()['careerNode']]
+    if not uicore.registry.GetWindow('AchievementsWindow'):
+        uthread.new(uicore.cmd.OpenAchievementsWindow); _sleep(4000)
+    wait_until(lambda: _achievements().are_definitions_loaded(), 30000)
+    _achievement_nav('SideNavigationTitleEntry', 'adf4a591-3aac-508f-9456-b73ec84d253f')
+    for i in range(8):
+        if _conversation_id() == 3656: break
+        cont_once(); _sleep(2500)
+    _achievement_nav('SideNavigationGroupEntry', category)
+    wait_until(lambda: _conversation_id() == 3657, 20000)
+    w = uicore.registry.GetWindow('AchievementsWindow')
+    card = [m for m in walk(w, lambda m: m.__class__.__name__ == 'CompactAchievementCard', [])
+            if achievement in str(m.controller.achievement_entry.identifier)][0]
+    # The card's hover tooltip holds the Track button, which calls this (track_button.py); the
+    # agent's pointer does not raise that tooltip.
+    if not card.controller.is_tracked: card.controller.toggle_tracked(); _sleep(3000)
+    uthread.new(uicore.cmd.OpenAchievement, card.controller.achievement_entry.identifier); _sleep(3000)
+    btn = [b for b in walk(uicore.desktop, lambda m: m.name == 'agency_button', []) if getattr(b, 'display', True)]
+    uthread.new(btn[0].OnClick); _sleep(4000)
+    _click(window='AgencyWndNew', name='Agency_CareerAgents_InteractionButton', wait=8); _sleep(2500)
+    _close('AgencyWndNew'); _sleep(1500)
+    w = uicore.registry.GetWindow('AchievementsWindow')
+    if w and not w.destroyed: w.CloseByUser(); _sleep(3000)
+    cont_once()
 def h_acp_goal():
+    if hasattr(uicore.cmd, 'OpenAchievementsWindow'):
+        return _acp_goal_achievements()
     if not _window('careerPortal') or not _window('careerPortal').display:
         uthread.new(uicore.cmd.CmdToggleAirCareerProgram); _sleep(4000)
     _wait_text('Choose the path', 90000)
@@ -731,7 +777,22 @@ PATH_GOALS = {'explorer': '7d202e65-ab0c-4a88-9016-a672aa1b7870', 'enforcer': 'b
     'producer': '9b88fc7a-dd03-4746-8937-d3f796c4d284'}
 def _path_goal():
     return PATH_GOALS[getattr(agent, 'air_path', None) or 'producer']
+NPE_CAREER_ACHIEVEMENTS = ['80474e8d-36c4-592f-b4c2-874f141a1ce9', '51a40e9c-6ed0-5444-81b1-2df54cf89624',
+    '4d02e982-1743-5817-8fa1-dd62b93336b9', '97d4a68e-e8e8-5f5e-8ba9-4fde4af94044', '03291629-f2db-5598-adb7-4254fa2f3ce6']
+def _npe_achievements():
+    # (reached a milestone, rewards unclaimed) for each NPE career-agent achievement: what graph 683
+    # (2.5.01, build 3698585) reads through atoms 749 and 729.
+    from achievement_system.client.model.definition.category.roots import AchievementCategoryRoot
+    r = _achievements()
+    out = []
+    for e in r.definitions.get_achievement_entries_recursive(r.definitions.get_root_category(AchievementCategoryRoot.CAREER_PROGRAM)):
+        if str(e.identifier.uuid) not in NPE_CAREER_ACHIEVEMENTS: continue
+        state = r.get_achievement_state(e.identifier)
+        out.append((bool(state and len(state.reached_milestones)), bool(r.get_unclaimed_rewards_for_achievement(e.identifier))))
+    return out
 def _goal_completed():
+    if hasattr(uicore.cmd, 'OpenAchievementsWindow'):
+        return any(reached for reached, _ in _npe_achievements())
     try:
         import uuid
         g = _goal_ctrl().get_goal(uuid.UUID(_path_goal()))
@@ -740,6 +801,8 @@ def _goal_completed():
         return False
 def _goal_done_claimed():
     # The path goal already completed and claimed (a re-run after the claim).
+    if hasattr(uicore.cmd, 'OpenAchievementsWindow'):
+        return any(reached and not unclaimed for reached, unclaimed in _npe_achievements())
     try:
         import uuid
         g = _goal_ctrl().get_goal(uuid.UUID(_path_goal()))
@@ -759,7 +822,11 @@ def h_acp_reward_reminder():
     agent.air_parts = getattr(agent, 'air_parts', [])
     # Play by part count, not by Aura's "via your NEOCOM" line: that line shows for any claimable
     # reward, and Entrepreneur part 1 completes a career-points goal of its own (seen 2026-11-04).
-    done_goal = lambda: str(_path_goal()) in [str(g.goal_id) for g in _goal_ctrl().get_goals_with_claimable_rewards()]
+    if hasattr(uicore.cmd, 'OpenAchievementsWindow'):
+        # Any NPE career-agent achievement reaching a milestone ends the reminder (atom 749).
+        done_goal = lambda: any(reached and unclaimed for reached, unclaimed in _npe_achievements())
+    else:
+        done_goal = lambda: str(_path_goal()) in [str(g.goal_id) for g in _goal_ctrl().get_goals_with_claimable_rewards()]
     for part in range(parts):
         if done_goal() or _goal_done_claimed() or _goal_completed(): break
         play_career_part(agentID)
