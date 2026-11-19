@@ -139,7 +139,35 @@ def h_battleship():
     b = hostiles(tid)[0][1]
     select_item(b); _mv.Orbit(b, 1000)
     engage(b)
+def _achievements():
+    from achievement_system.client.api.repository import get_repository
+    return get_repository()
+def _claim_achievement_rewards():
+    # Build 3698585 (24.02) moved the Career Program into the Achievements window. Graph 677
+    # (1.3.02) waits for "Achievement Reward Claimed" (atom 733) and then for the window to close
+    # (atom 735). A player opens Achievements, picks the Rewards tab and presses Claim All.
+    w = uicore.registry.GetWindow('AchievementsWindow')
+    if not w or w.destroyed:
+        uthread.new(uicore.cmd.OpenAchievementsWindow); _sleep(4000)
+        w = uicore.registry.GetWindow('AchievementsWindow')
+    wait_until(lambda: _achievements().are_definitions_loaded(), 30000)
+    tab = walk(w, lambda m: getattr(m, 'name', '') == 'rewards' and 'Tab' in m.__class__.__name__, [])
+    if tab: uthread.new(tab[0].OnClick); _sleep(2000)
+    for i in range(3):
+        count = _achievements().get_unclaimed_rewards_count()
+        btn = walk(w, lambda m: getattr(m, 'name', '') == 'claim_all_button', [])
+        agent.air_claim_log = getattr(agent, 'air_claim_log', []) + [(i, bool(btn), count)]
+        if not count: break
+        if btn:
+            wait_until(lambda: btn[0].enabled and not getattr(btn[0], 'busy', False), 10000)
+            uthread.new(btn[0].OnClick); _sleep(2000)
+            wait_until(lambda: not _achievements().get_unclaimed_rewards_count(), 10000)
+    cont_once(); _sleep(1500)
+    w = uicore.registry.GetWindow('AchievementsWindow')
+    if w and not w.destroyed: w.CloseByUser(); _sleep(3000)
 def h_acp_claim_all():
+    if hasattr(uicore.cmd, 'OpenAchievementsWindow'):
+        return _claim_achievement_rewards()
     if not _window('careerPortal') or not _window('careerPortal').display:
         uthread.new(uicore.cmd.CmdToggleAirCareerProgram); _sleep(4000)
     _portal_ready()
