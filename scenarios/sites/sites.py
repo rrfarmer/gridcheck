@@ -166,6 +166,8 @@ def site_answer_yes():
         if getattr(wnd, 'name', '') == 'modal':
             for node in wnd.Find('trinity.Tr2Sprite2dContainer') if hasattr(wnd, 'Find') else []:
                 pass
+    # uiconst is not a builtin in build 3698585.
+    import carbonui.const as uiconst
     modal = uicore.registry.GetModalWindow()
     if modal and hasattr(modal, 'SetModalResult'):
         modal.SetModalResult(uiconst.ID_YES)
