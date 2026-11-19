@@ -1288,6 +1288,15 @@ function headlessAccounts() {
 // A launched client leaves the AIR tutorial unless --tutorial: in it, the client asks
 // "Skip NPE?" before any action off the tutorial's path, and an answer of Yes there
 // skips it anyway. The AIR plugin's scenarios pass tutorial: true.
+async function closeSplash(username) {
+  try {
+    const state = (await clientCommand("eval", { code: clientTools.CLOSE_SPLASH_PYTHON }, { user: username, timeout: 30 })).value.json;
+    if (state === "closed") console.log("  closed the new-feature splash");
+  } catch (error) {
+    console.log(`  could not close the new-feature splash: ${error.message}`);
+  }
+}
+
 async function leaveTutorial(username, flags) {
   if (flags.tutorial === true) return;
   let state;
@@ -1317,6 +1326,7 @@ async function clientLaunch(handshake, flags) {
     console.log(`the ${username} client is already in game as character ${running.characterID}, pid ${running.pid || "?"}; ` +
       `using it (\`gridcheck client stop${flags.user ? ` --user ${username}` : ""}\` first for a new one)`);
     await leaveTutorial(username, flags);
+    await closeSplash(username);
     if (running.pid && !clientRecord.readLaunched(E2E_DIR)[username]) {
       clientRecord.recordLaunched(E2E_DIR, username, { pid: running.pid, characterID: running.characterID, accountID: running.accountID, flags });
     }
@@ -1408,6 +1418,7 @@ async function clientLaunch(handshake, flags) {
       console.log(`in game as character ${characterID} after ${seconds} s` +
         `${where ? `, ${where.docked ? `docked at ${where.docked}` : "in space"} in ${where.solarSystemID}` : ""}`);
       await leaveTutorial(username, flags);
+      await closeSplash(username);
       // So `client stop`, `down` and `restart --client` find it once the bridge is gone.
       clientRecord.recordLaunched(E2E_DIR, username, { pid: agent.pid || null, characterID, accountID, launchedAtMs: startedAtMs, flags });
       return { username, accountID, characterID, pid: agent.pid || null, build: agent.build || null, seconds };

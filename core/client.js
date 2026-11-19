@@ -152,6 +152,22 @@ const SKIP_TUTORIAL_PYTHON = [
   "    result = 'pending' if state == 1 else 'skipped'",
 ].join("\n");
 
+// The new-feature splash (NewFeatureNotifyWnd) build 3698585 shows over the game after
+// login. It sits in the modal layer, so actions and UI checks behind it act on a covered
+// screen. Its X button's handler did not close it from the agent; the window's own close
+// does, as a player's close would. Waits up to 10 s for it to appear. 'closed' or 'none'.
+const CLOSE_SPLASH_PYTHON = [
+  "result = 'none'",
+  "for _ in range(20):",
+  "    w = uicore.registry.GetWindow('NewFeatureNotifyWnd')",
+  "    if w and not w.destroyed:",
+  "        w.CloseByUser()",
+  "        blue.pyos.synchro.SleepWallclock(1000)",
+  "        result = 'closed'",
+  "        break",
+  "    blue.pyos.synchro.SleepWallclock(500)",
+].join("\n");
+
 async function waitForNativeChat({ read, deadlineMs, now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   while (now() < deadlineMs) {
@@ -785,6 +801,7 @@ function actSummary(value) {
 module.exports = {
   CHAT_READINESS_PYTHON,
   SKIP_TUTORIAL_PYTHON,
+  CLOSE_SPLASH_PYTHON,
   prepareClientLaunch,
   waitForNativeChat,
   BALLPARK_LATE_MS,
