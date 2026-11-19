@@ -638,6 +638,17 @@ def arc_step(agentIDs, log, complete_with_gm=True):
             buttons = dict((button, actionID) for actionID, button in actions)
             contentID = says[1] if isinstance(says, tuple) and len(says) > 1 else contentID
         if 3 in buttons:
+            # Missions with an agent gift, courier cargo or a talk-to target are accepted in
+            # person only; the server answers a remote accept with the offer again.
+            stationID = getattr(sm.GetService('agents').GetAgentByID(agentID), 'stationID', None)
+            if stationID and session.stationid != stationID:
+                site_dock_home_at(stationID)
+                sm.GetService('agents').agentMonikers.pop(agentID, None)
+                (says, actions), info = agent_do(agentID)
+                buttons = dict((button, actionID) for actionID, button in actions)
+                if 3 not in buttons:
+                    log.append((agentID, 'offer gone after docking', actions))
+                    return None
             agent_do(agentID, buttons[3])
             journal = agent_journal(agentID) or {}
             for kind, data in (journal.get('objectives') or {}).get('objectives') or []:
@@ -814,7 +825,10 @@ def bss_step_finale():
     # turn in; the arc status records 14469 completed.
     from eve.client.script.ui.services.menuSvcExtras import movementFunctions
     sm.GetService('agents').agentMonikers.pop(BSS_CALDARI_COMMANDER, None)
-    agent_press(BSS_CALDARI_COMMANDER, (3,))
+    if (agent_journal(BSS_CALDARI_COMMANDER) or {}).get('missionState') != 2:
+        agent_press(BSS_CALDARI_COMMANDER, (3,))
+    # The dungeon bookmark arrives a moment after the accept.
+    site_wait(lambda: agent_bookmark(BSS_CALDARI_COMMANDER, 'dungeon') is not None, 30000)
     agent_warp(BSS_CALDARI_COMMANDER, 'dungeon')
     gate = site_wait(lambda: [r[1] for r in site_entities() if r[2] == 'Acceleration Gate'], 30000)[0]
     uthread.new(sm.GetService('menu').ActivateAccelerationGate, gate)
