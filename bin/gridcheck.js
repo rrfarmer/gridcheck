@@ -3238,7 +3238,14 @@ async function cmdUp(flags) {
 
   requireWorldIdle();
   const ports = TREE_PORTS;
-  const busy = await busyPorts(ports, LISTENERS);
+  // With the market daemon off, a market on its ports is one the user runs for this tree (the
+  // server's EVEJS_MARKET_DAEMON_PORT points there), not a conflict.
+  const externalMarket = flags["no-market"] || !CONFIG.market.enabled;
+  const busyAll = await busyPorts(ports, LISTENERS);
+  const busy = busyAll.filter((row) => !(externalMarket && (row.name === "marketHttp" || row.name === "marketRpc")));
+  if (busy.length !== busyAll.length) {
+    console.log(`note: the market daemon is off and a market answers on :${ports.marketRpc}; the server uses that one`);
+  }
   if (busy.length) {
     throw new CliError(
       `port(s) in use: ${busy.map((row) => `${row.name} ${row.host}:${row.port}`).join(", ")}. ` +
