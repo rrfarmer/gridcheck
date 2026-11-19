@@ -48,6 +48,11 @@ test("a native chat host moves chat to another loopback address and leaves share
 Dry run complete. Client launch skipped.`;
   assert.doesNotThrow(() => prepareClientLaunch({ ...opts, run: () => ({ status: 0, stdout: output }) }));
   assert.throws(() => prepareClientLaunch({ ...opts, ports: block }), /XMPP :5222/);
+  // The bridge's handshake is where `client launch` reads the ports.
+  const { serverPorts } = require("../bridge/entry");
+  const stock = { config: { serverPort: ports.game, microservicesPort: ports.gateway } };
+  assert.equal(serverPorts(stock, serverEnvironment(ports)).xmppHost, "127.0.0.2");
+  assert.equal(serverPorts(stock, serverEnvironment(nativeClientPorts(block, true))).xmppHost, undefined);
 });
 
 function setup() {

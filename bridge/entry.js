@@ -61,9 +61,13 @@ function serverPorts(stock, env = process.env) {
     const numeric = Math.trunc(Number(value) || 0);
     return numeric > 0 && numeric < 65536 ? numeric : null;
   };
+  // A native chat host (core/ports.js nativeClientPorts) moves chat off 127.0.0.1.
+  const chatHost = String(env.EVEJS_XMPP_CONNECT_HOST || "").trim();
+  const xmppHost = /^127\.\d+\.\d+\.\d+$/.test(chatHost) && chatHost !== "127.0.0.1" ? chatHost : null;
   return { game: port(config.serverPort), gateway: port(config.microservicesPort),
     xmpp: port(env.EVEJS_XMPP_SERVER_PORT) || 5222,
-    cdn: port(env.EVEJS_PROXY_LOOPBACK_CDN_LISTEN_PORT) || 443 };
+    cdn: port(env.EVEJS_PROXY_LOOPBACK_CDN_LISTEN_PORT) || 443,
+    ...(xmppHost ? { xmppHost } : {}) };
 }
 
 // The client view runs only if the decoder reads this tree's ball layout.
@@ -331,4 +335,5 @@ function createService({ serverRoot, stock: givenStock = null, pluginsDir = DEFA
 
 module.exports = {
   createService,
+  serverPorts,
 };
