@@ -73,7 +73,7 @@ function clientEnvironment({ env = process.env, resfiles, gatewayPort }) {
 function prepareClientLaunch({ treeRoot, exe, resfiles, ports, dataRoot, logFile = null, env = process.env,
   platform = process.platform, run = spawnSync, readText = (file) => fs.readFileSync(file, "utf8") }) {
   if (platform !== "win32") throw new Error("native client launch requires Windows and the tree's Play.bat preflight");
-  if (!ports || ports.xmpp !== 5222 || ports.cdn !== 443) {
+  if (!ports || ports.xmpp !== 5222 || (ports.cdn !== 443 && !ports.xmppHost)) {
     throw new Error("native client requires XMPP :5222 and shared HTTPS :443; set nativeClient: true in gridcheck.config.json and restart the managed server. Do not dismiss the chat popup");
   }
   const play = path.join(treeRoot, "Play.bat");

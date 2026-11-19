@@ -61,6 +61,7 @@ node tools/gridcheck/bin/gridcheck.js init --force          # replace an existin
 | `handshake` | where the bridge writes its port and token | `_local/agentBridge/bridge.json` |
 | `listeners` | which ports `gridcheck up` can move, and how | probed |
 | `nativeClient` | reserve shared HTTPS443 and XMPP5222 for the supported native client | `false` |
+| `nativeClientChatHost` | with `nativeClient`, put chat on this loopback address (port 5222) and keep HTTPS on the block, to run beside a server that holds `127.0.0.1` | none |
 | `daemons.market` | the market daemon and its database | on if the tree has its source and a database |
 
 The environment wins over the file, as it does for the server: `EVEJS_GAMESTORE_DATA_DIR` moves the

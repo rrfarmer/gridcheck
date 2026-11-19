@@ -24,6 +24,32 @@ test("native profile retains game isolation and pins the two native destinations
   assert.equal(loadTreeConfig(__dirname, { env: {} }).nativeClient, false);
 });
 
+test("a native chat host moves chat to another loopback address and leaves shared HTTPS on the block", () => {
+  const block = portsForSlot(141);
+  const ports = nativeClientPorts(block, true, "127.0.0.2");
+  assert.equal(ports.xmpp, 5222);
+  assert.equal(ports.xmppHost, "127.0.0.2");
+  assert.equal(ports.cdn, block.cdn, "127.0.0.1:443 stays with the server that holds it");
+  const env = serverEnvironment(ports);
+  assert.equal(env.EVEJS_XMPP_SERVER_BIND_HOST, "127.0.0.2");
+  assert.equal(env.EVEJS_XMPP_CONNECT_HOST, "127.0.0.2");
+  assert.equal(env.EVEJS_PROXY_LOOPBACK_CDN_LISTEN_PORT, String(block.cdn));
+  assert.equal(serverEnvironment(nativeClientPorts(block, true)).EVEJS_XMPP_SERVER_BIND_HOST, undefined);
+  assert.equal(nativeClientPorts(block, true, "127.0.0.1").cdn, 443, "the stock address keeps the stock profile");
+  assert.deepEqual(validateConfig({ configVersion: 1, nativeClient: true, nativeClientChatHost: "127.0.0.2" }), []);
+  for (const bad of ["10.0.0.2", "127.0.0", "127.0.0.256", "localhost", 2]) {
+    assert.match(validateConfig({ configVersion: 1, nativeClientChatHost: bad }).join(), /nativeClientChatHost/);
+  }
+  const opts = setup();
+  opts.ports = ports;
+  const output = `    Client: ${opts.exe} /port:${ports.game}
+    ResFiles: ${opts.resfiles}
+    Proxy:  http://127.0.0.1:${ports.gateway}/
+Dry run complete. Client launch skipped.`;
+  assert.doesNotThrow(() => prepareClientLaunch({ ...opts, run: () => ({ status: 0, stdout: output }) }));
+  assert.throws(() => prepareClientLaunch({ ...opts, ports: block }), /XMPP :5222/);
+});
+
 function setup() {
   const treeRoot = path.resolve("test-tree");
   const exe = path.join(treeRoot, "client", "tq", "bin64", "exefile.exe");

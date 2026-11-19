@@ -95,7 +95,7 @@ const MARKET_CONFIG_PATH = path.join(E2E_DIR, "market-server.toml");
 const MARKET_OUT_PATH = path.join(E2E_DIR, "market.out.log");
 const MARKET_BUILD_PATH = path.join(E2E_DIR, "market.build.log");
 const LISTENERS = usableListeners(REGISTRY.listeners);
-const TREE_PORTS = nativeClientPorts(portsForTree(REPO_ROOT, process.env, LISTENERS), CONFIG.nativeClient);
+const TREE_PORTS = nativeClientPorts(portsForTree(REPO_ROOT, process.env, LISTENERS), CONFIG.nativeClient, CONFIG.nativeClientChatHost);
 const MODE = CONFIG.mode;
 const MANAGED = MODE === "managed";
 const AUTO = MODE === "auto";
@@ -3241,7 +3241,7 @@ async function cmdUp(flags) {
   const busy = await busyPorts(ports, LISTENERS);
   if (busy.length) {
     throw new CliError(
-      `port(s) in use: ${busy.map((row) => `${row.name} :${row.port}`).join(", ")}. ` +
+      `port(s) in use: ${busy.map((row) => `${row.name} ${row.host}:${row.port}`).join(", ")}. ` +
       `Another process holds this tree's block (slot ${ports.slot}); stop it, or run up with ` +
       "GRIDCHECK_PORT_SLOT=<0-799> to choose another block.",
     );

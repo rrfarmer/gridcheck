@@ -34,7 +34,7 @@ const DEFAULT_MODE = "auto";
 const PATH_KEYS = Object.freeze(["serverDir", "dataRoot", "dataDir", "gameStore", "manifest", "logFile", "e2eDir",
   "worldsDir", "runsDir", "scenariosDir", "handshake"]);
 // node: the node that runs the server, when it isn't the one running the CLI (core/node.js).
-const KEYS = new Set(["configVersion", "mode", "nativeClient", "start", "node", "listeners", "daemons", ...PATH_KEYS]);
+const KEYS = new Set(["configVersion", "mode", "nativeClient", "nativeClientChatHost", "start", "node", "listeners", "daemons", ...PATH_KEYS]);
 const MARKET_KEYS = new Set(["enabled", "dir", "config", "database"]);
 const LISTENER_KEYS = new Set(["movable", "via"]);
 const MARKET_DIR = "externalservices/market-server";
@@ -212,6 +212,9 @@ function validateConfig(raw) {
   if (raw.configVersion !== CONFIG_VERSION) problems.push(`configVersion is ${JSON.stringify(raw.configVersion)}; this tool reads ${CONFIG_VERSION}`);
   if (raw.mode !== undefined && !MODES.includes(raw.mode)) problems.push(`mode is auto, attach or managed, not ${JSON.stringify(raw.mode)}`);
   if (raw.nativeClient !== undefined && typeof raw.nativeClient !== "boolean") problems.push("nativeClient is true or false");
+  if (raw.nativeClientChatHost !== undefined && !require("./ports").validChatHost(raw.nativeClientChatHost)) {
+    problems.push("nativeClientChatHost is an IPv4 loopback address such as 127.0.0.2");
+  }
   for (const key of PATH_KEYS) if (raw[key] !== undefined && !validPath(raw[key])) problems.push(`${key} is a path`);
   if (raw.start !== undefined && !validStart(raw.start)) problems.push('start is an argv starting with "node", e.g. ["node", "."]');
   if (raw.node !== undefined && !validPath(raw.node)) problems.push("node is the path of a node executable");
@@ -292,6 +295,7 @@ function loadTreeConfig(treeRoot, { env = process.env } = {}) {
     problems,
     mode: merged.mode,
     nativeClient: given.nativeClient === true,
+    nativeClientChatHost: require("./ports").validChatHost(given.nativeClientChatHost) ? given.nativeClientChatHost : null,
     serverDir: absolute(treeRoot, merged.serverDir),
     start: merged.start,
     node: validPath(given.node) ? path.resolve(treeRoot, given.node) : null,

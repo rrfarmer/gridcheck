@@ -88,8 +88,25 @@ function portsForTree(treeRoot, env = process.env, listeners = []) {
 // The supported native client uses fixed destinations for shared HTTPS and
 // XMPP. Moving only the server listeners breaks native login/chat. Opt in per
 // tree; busyPorts still refuses a conflict without touching another process.
-function nativeClientPorts(ports, enabled = false) {
-  return enabled ? Object.freeze({ ...ports, cdn: 443, xmpp: 5222 }) : ports;
+//
+// chatHost puts the chat listener on another loopback address (127.0.0.2),
+// still on 5222, so this tree runs beside a server that holds 127.0.0.1:5222.
+// The server tells the client its chat host, and the client's chat TLS does
+// not check the host name. Shared HTTPS cannot move: the client fetches CDN
+// checkpoints from 127.0.0.1:443 and the local CA is constrained to that
+// address. In that profile the CDN listener keeps its block port, and those
+// read-only checkpoint fetches reach whichever server holds 127.0.0.1:443.
+function nativeClientPorts(ports, enabled = false, chatHost = null) {
+  if (!enabled) return ports;
+  if (chatHost && chatHost !== "127.0.0.1") return Object.freeze({ ...ports, xmpp: 5222, xmppHost: chatHost });
+  return Object.freeze({ ...ports, cdn: 443, xmpp: 5222 });
+}
+
+// A chat host this tool accepts: an IPv4 loopback address.
+function validChatHost(value) {
+  const parts = String(value).split(".");
+  return parts.length === 4 && parts[0] === "127" &&
+    parts.every((part) => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
 }
 
 // The environment that moves every listener of `npm start` onto the block.
@@ -107,6 +124,10 @@ function serverEnvironment(ports, listeners = []) {
     EVEJS_MARKET_DAEMON_PORT: String(ports.marketRpc),
     EVEJS_XMPP_SERVER_PORT: String(ports.xmpp),
   };
+  if (ports.xmppHost) {
+    env.EVEJS_XMPP_SERVER_BIND_HOST = ports.xmppHost;
+    env.EVEJS_XMPP_CONNECT_HOST = ports.xmppHost;
+  }
   for (const listener of usableListeners(listeners)) {
     if (listener.env && ports[listener.name]) env[listener.env] = String(ports[listener.name]);
   }
@@ -147,13 +168,15 @@ function portFree(port, host = "127.0.0.1") {
 async function busyPorts(ports, listeners = []) {
   const busy = [];
   for (const name of [...Object.keys(OFFSETS), ...usableListeners(listeners).map((listener) => listener.name)]) {
-    if (ports[name] && !await portFree(ports[name])) busy.push({ name, port: ports[name] });
+    const host = name === "xmpp" && ports.xmppHost ? ports.xmppHost : "127.0.0.1";
+    if (ports[name] && !await portFree(ports[name], host)) busy.push({ name, port: ports[name], host });
   }
   return busy;
 }
 
 module.exports = {
   nativeClientPorts,
+  validChatHost,
   BLOCK_BASE,
   BLOCK_SIZE,
   LISTENER_ENV,

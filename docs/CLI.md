@@ -106,6 +106,14 @@ reserves XMPP **5222** and shared HTTPS **443**, matching the supported client's
 destinations. Startup refuses occupied ports; preserve the owning session.
 Other headless trees can retain the default allocated ports.
 
+To run beside another server that already holds `127.0.0.1:5222` and `:443`,
+also set `"nativeClientChatHost": "127.0.0.2"`. Chat then listens on
+`127.0.0.2:5222`, which the server names to the client, and the HTTPS listener
+stays on the tree's block. The client still fetches its read-only CDN
+checkpoints (map tags, achievements) from `127.0.0.1:443`, the other server;
+the local CA is limited to `127.0.0.1`, so that cannot move. Everything else,
+login, gateway and game traffic included, stays with this tree's server.
+
 Client launch now runs the tree's actual `Play.bat` with `EVEJS_DRY_RUN=1` before
 minting a login token or spawning the game. Play's configured client/cache must
 match the selected executable/cache. Patch, resource, certificate, proxy and
