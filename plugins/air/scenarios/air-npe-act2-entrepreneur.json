@@ -1,6 +1,11 @@
 {
   "description": "AIR NPE act 2 (chapters 2.1-2.4, up to 2.5.01) played end to end by a real EVE client, carrying on from air-npe-act1 with the same character (account airent, character Aira Entrepreneur): mining site, market, wallet, career program, stargate travel to the career station, career agent, and the reward reminder, which on the Industrialist Entrepreneur career path plays that path's career mission(s). Ends with get_air_npe_state = 2.",
   "world": "fresh",
+  "up": {
+    "env": {
+      "EVEJS_NEW_CHARACTER_EXPERIENCE_MODE": "tutorial"
+    }
+  },
   "watch": {
     "screenshots": [
       "stop"

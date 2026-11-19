@@ -1,6 +1,11 @@
 {
   "description": "AIR NPE act 1 (chapters 1.1-1.5) played end to end by a real EVE client. A fresh character (account airexp, character Aira Explorer) enters the AIR opening and the driver in air/air_npe.py plays each step through the client's own UI and services, as the client graphs ask for them, until the act 2 opportunity is accepted. Needs the client-agent patch, a server in tutorial mode (EVEJS_NEW_CHARACTER_EXPERIENCE_MODE=tutorial) and a fresh data root (the character is made on first launch).",
   "world": "fresh",
+  "up": {
+    "env": {
+      "EVEJS_NEW_CHARACTER_EXPERIENCE_MODE": "tutorial"
+    }
+  },
   "watch": {
     "screenshots": [
       "stop"
