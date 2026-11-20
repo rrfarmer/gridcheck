@@ -556,9 +556,11 @@ eveprefs.boot.build = 3400000
 send(28, 'ui', {'depth': 0})
 send(29, 'eval', {'code': '1'})
 send(30, 'ui', {'depth': 0, 'anyBuild': True})
-eveprefs.boot.build = 3396210
+# 24.02, the other checked build: its ops run without anyBuild.
+eveprefs.boot.build = 3698585
 send(31, 'screenshot', {'path': ${JSON.stringify(SHOT_PATH)}})
 send(32, 'screenshot', {'path': 'shot.png'})
+eveprefs.boot.build = 3396210
 send(33, 'eval', {'code': 'y = 5\\ny * 2'})
 send(34, 'eval', {'code': 'blue.os.GetSimTime() >= 0, uthread is not None'})
 # Docked, with the client's session-change timer running for 3 s more.
@@ -603,8 +605,8 @@ print(json.dumps({'replies': replies, 'hellos': hellos, 'batches': batches, 'log
     [36, true], [37, true]], JSON.stringify(replies.filter((reply) => !reply.ok).map((reply) => [reply.id, reply.error.trim().split("\n").pop()])));
 
   assert.deepEqual([hellos.length, hellos[0].agent, hellos[0].build, hellos[0].checkedBuild, typeof hellos[0].pid],
-    [1, 11, 3396210, 3396210, "number"]);
-  assert.match(byID[28].error, /ui uses client code checked against build 3396210; this client is build 3400000/,
+    [1, 12, 3396210, 3396210, "number"]);
+  assert.match(byID[28].error, /ui uses client code checked against builds 3396210, 3698585; this client is build 3400000/,
     "another build: ops that use client names refuse, eval and anyBuild still run");
   assert.equal(byID[1].value.session.charid, 90000001);
   assert.equal(byID[1].value.session.role, "7348784299939993600", "an integer past 2^53 goes as a string");

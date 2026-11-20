@@ -559,13 +559,17 @@ function clientExe(flags) {
   return found.exe;
 }
 
+// --any-build on the command line covers every op the command sends, the ones it
+// makes on its own (screenshot's area, the diff's ballpark) as well as its own.
+let anyBuildCommand = false;
+
 async function clientCommand(op, args, flags) {
   const handshake = requireHandshake();
   const seconds = flags.timeout === undefined ? 15 : Number(flags.timeout);
   if (!(seconds >= 1 && seconds <= 300)) throw new CliError("--timeout takes seconds from 1 through 300");
   const { status, json } = await requestJSON(`http://${handshake.host}:${handshake.port}/client/command`, {
     method: "POST",
-    body: { op, args: flags["any-build"] ? { ...args, anyBuild: true } : args, user: flags.user ? String(flags.user) : undefined,
+    body: { op, args: flags["any-build"] || anyBuildCommand ? { ...args, anyBuild: true } : args, user: flags.user ? String(flags.user) : undefined,
       timeoutMs: seconds * 1000 },
     headers: { authorization: `Bearer ${handshake.token}` },
     timeoutMs: (seconds + 10) * 1000,
@@ -896,7 +900,7 @@ async function cmdClient(positionals, flags) {
     `compare-images, compare-frames, ballpark, diff, events, find, click, menu, type, key, cmd, pointer or act; got ${sub === undefined ? "nothing" : JSON.stringify(sub)}`);
 }
 
-// The agent names the build its client calls were checked against (bridge/client/agent.py CHECKED_BUILD).
+// The agent names the build its client calls were checked against (bridge/client/agent.py CHECKED_BUILDS: the client's own when it is one of them).
 function buildWarning(agent) {
   if (!agent.checkedBuild || !agent.build || agent.build === agent.checkedBuild) return null;
   return `build ${agent.build} isn't the ${agent.checkedBuild} the agent was checked against: only ping, eval and events run; ` +

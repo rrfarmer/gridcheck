@@ -205,7 +205,7 @@ const DOCS = {
       ["--out <json>", null, "eval, ui-state, check-ui: also save the answer to this file."],
       ["--wait <s>", "0", "check-ui: read the UI again until the check holds, up to this long (at most 300)."],
       ["--stable <ms>", "0", "check-ui: the check must keep holding this long, on the same nodes, within --wait."],
-      ["--any-build", null, "Run an op that uses the client's code on a build other than the one the agent was checked against (3396210)."],
+      ["--any-build", null, "Run an op that uses the client's code on a build other than the one the agent was checked against (3396210 and 3698585)."],
       ["--depth N", "3, or 40 with a filter", "How deep ui walks."], ["--hidden", null, "ui also walks hidden nodes."],
       ["--source auto|client|window", "auto", "screenshot: client saves the back buffer; window draws the window from outside with PrintWindow (not while minimized, but works when the agent can't answer); auto tries client, then window."],
       ["--tolerance <m>", "1000", "diff: how far apart a ball may be, plus 2 s of its speed."],

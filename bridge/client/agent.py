@@ -7,7 +7,9 @@
 # loops without yielding stalls the client, as any client code would.
 #
 # Every client name used here, with the module that defines it in build 3396210
-# (CHECKED_BUILD), from the whole client decompiled by tools/ClientCodeGrabber.
+# (CHECKED_BUILDS), from the whole client decompiled by tools/ClientCodeGrabber.
+# Build 3698585 (24.02) was checked by importing each module below and reading
+# each attribute in a live client; a name added here is checked in both.
 # Keep that tree outside the repo; check a name there before adding it.
 #   blue.pyos.synchro.SleepWallclock, blue.os.GetWallclockTime, blue.os.GetSimTime  native (blue)
 #   session.mutating, session.nextSessionChange (blue sim time; a change before it is refused)
@@ -115,10 +117,10 @@ try:
 except ImportError:
     import builtins
 
-VERSION = 11
-# The build the client names above were checked against. Ops that use them
+VERSION = 12
+# The builds the client names above were checked against. Ops that use them
 # refuse on another build unless the command passes anyBuild; these don't.
-CHECKED_BUILD = 3396210
+CHECKED_BUILDS = (3396210, 3698585)
 BUILD_FREE_OPS = ('ping', 'eval', 'events', 'flush', 'rpc', 'inspect')
 # Ops whose errors are their caller's alone: a poll loop of them would bury the timeline.
 CALLER_ERROR_OPS = ('eval', 'rpc')
@@ -272,6 +274,15 @@ def client_build():
         return scalar(getattr(boot, 'build', None))
     except Exception:
         return None
+
+
+# The checked build this client is, else the newest one checked.
+def checked_build():
+    build = str(client_build())
+    for checked in CHECKED_BUILDS:
+        if str(checked) == build:
+            return checked
+    return CHECKED_BUILDS[-1]
 
 
 def whole(value):
@@ -900,15 +911,15 @@ class Agent(object):
         return self.sm.RemoteSvc('gridcheckClient')
 
     def identity(self):
-        return {'agent': VERSION, 'build': client_build(), 'checkedBuild': CHECKED_BUILD, 'pid': os.getpid()}
+        return {'agent': VERSION, 'build': client_build(), 'checkedBuild': checked_build(), 'pid': os.getpid()}
 
     def check_build(self, op, args):
         if op in BUILD_FREE_OPS or args.get('anyBuild'):
             return
         build = client_build()
-        if str(build) != str(CHECKED_BUILD):
-            raise ValueError('%s uses client code checked against build %s; this client is build %s. ping and eval still '
-                             'work; anyBuild (--any-build) runs it anyway' % (op, CHECKED_BUILD, build or 'unknown'))
+        if str(build) != str(checked_build()):
+            raise ValueError('%s uses client code checked against builds %s; this client is build %s. ping and eval still '
+                             'work; anyBuild (--any-build) runs it anyway' % (op, ', '.join(str(b) for b in CHECKED_BUILDS), build or 'unknown'))
 
     def hello(self):
         try:
@@ -1138,7 +1149,7 @@ class Agent(object):
             'windows': [window_info(window) for window in attempt(lambda: registry.GetWindows(), []) or []],
             'session': session_snapshot(getattr(builtins, 'session', None)),
             'agentVersion': VERSION,
-            'checkedBuild': CHECKED_BUILD,
+            'checkedBuild': checked_build(),
             'sampleMs': max(0, int((time.time() - started) * 1000)),
         }
 
