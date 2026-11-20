@@ -11,7 +11,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
-  REQUIRED_GATEWAY_CALLS, buildReport, checkGatewayCalls, detectPatches, loadPatches, sessionShape,
+  REQUIRED_GATEWAY_CALLS, buildReport, checkGatewayCalls, clientOnThisMachine, detectPatches, loadPatches, sessionShape,
 } = require("../core/capabilities");
 const { createDestinyTee, probeDestinyLayout } = require("../bridge/destiny");
 const { createAgentBridgeRoutes } = require("../bridge/routes");
@@ -213,4 +213,26 @@ test("a bridge whose tree writes another destiny layout keeps the client view of
   assert.match(start.clientOff, /not the one the decoder reads/);
   assert.match(formatTimelineEvent({ ...start, t: 0 }), /client=off \(this tree's destiny ball layout/);
   assert.ok(!events.some((event) => event.kind === "DIVERGE"), "no DIVERGE from a view that isn't there");
+});
+
+test("doctor finds the client where the CLI runs, not in a server's container", () => {
+  const host = fs.mkdtempSync(path.join(os.tmpdir(), "gc-client-host-"));
+  try {
+    const exe = path.join(host, "tq", "bin64", "exefile.exe");
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.writeFileSync(exe, "");
+    const fromContainer = { ok: false, patch: "applied", service: "on", exe: null, exeSource: "EVEJS_CLIENT_PATH",
+      fixes: ["EVEJS_CLIENT_PATH names C:\EVE\tq, which has no bin64\exefile.exe; pass --exe"] };
+    const here = clientOnThisMachine(fromContainer, { treeRoot: null, env: { EVEJS_CLIENT_PATH: path.join(host, "tq") } });
+    assert.deepEqual([here.ok, here.exe, here.fixes], [true, exe, []]);
+    const off = clientOnThisMachine({ ...fromContainer, service: "off", fixes: ["the bridge's gridcheckClient service is off: x"] },
+      { treeRoot: null, env: { EVEJS_CLIENT_PATH: path.join(host, "tq") } });
+    assert.deepEqual([off.ok, off.fixes], [false, ["the bridge's gridcheckClient service is off: x"]], "the server's other findings stay");
+    const none = clientOnThisMachine(fromContainer, { treeRoot: null, env: { EVEJS_CLIENT_PATH: path.join(host, "nowhere") } });
+    assert.equal(none.ok, false);
+    assert.equal(none.fixes.length, 1, "this machine's lookup failure replaces the server's");
+    assert.match(none.fixes[0], /nowhere/);
+  } finally {
+    fs.rmSync(host, { recursive: true, force: true });
+  }
 });

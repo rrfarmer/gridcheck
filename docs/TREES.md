@@ -168,10 +168,16 @@ container publishes, and the CLI on the host has to find its handshake and log:
 | a host folder mounted over the server's log folder, and `EVEJS_AGENT_BRIDGE_HOST_LOG_FILE=<host path to server.log>` | `watch`, `log` and `run` read the log on the host |
 | the game and gateway ports published on the same numbers | the handshake carries the container's own port numbers |
 | `EVEJS_AGENT_BRIDGE_PUBLISHED_PORTS={"cdn":443}` | a listener the container publishes on another host port (here its CDN 26003 as the host's 443, which `client launch` needs); the handshake names the host port |
+| the host tree's `gridcheck.config.json` mounted read-only at the image's `<tree>/gridcheck.config.json` | the bridge hands out client tokens only in a gridcheck test tree, and an image built with a `.dockerignore` may not carry the file |
 
 The handshake names `127.0.0.1` for a bridge listening on `0.0.0.0`
 (`EVEJS_AGENT_BRIDGE_ADVERTISE_HOST` overrides it). The bridge's token is in the handshake only, so mount the
 handshake folder from the host and nowhere else.
+
+The EVE client runs on the host, where the CLI does: `client launch` starts it there, and `doctor`
+looks for its `exefile.exe` on the host even when the rest of its report comes from the container's server.
+With PowerShell, write the published-ports JSON with escaped quotes (`'{\"cdn\":443}'`) when it goes to
+`docker run` as an argument: Windows PowerShell 5.1 drops bare double quotes from a native command's arguments.
 
 ## Stock EveJS's differences
 

@@ -3941,6 +3941,7 @@ async function cmdDoctor(flags) {
     try {
       report = await callBridge(handshake, "GET", `/capabilities${query}`);
       report.source = `the running server, pid ${handshake.pid}`;
+      report.client = capabilities.clientOnThisMachine(report.client, { treeRoot: REPO_ROOT });
     } catch (error) {
       console.log(`the running server doesn't answer /capabilities (${error.message}); checking the files instead`);
     }
@@ -4257,6 +4258,7 @@ function commandHelpText(command, sub) {
 
 async function main(argv) {
   const { command, positionals, flags } = parseArgs(argv);
+  anyBuildCommand = Boolean(flags["any-build"]);
   if (flags.help && command !== "help") {
     console.log(commandHelpText(command, positionals[0]));
     return;

@@ -212,8 +212,24 @@ function clientReport({ treeRoot, patches, service, env }) {
     serviceReason: service ? service.reason : "only the running server knows",
     exe: found.exe || null,
     exeSource: found.source || null,
+    exeError: found.error || null,
     fixes,
   };
+}
+
+// The client runs where the CLI does, not where the server does: a server in a
+// container looks for exefile.exe in its own filesystem. Redoes a report's client
+// lookup on this machine, keeping the server's other findings.
+function clientOnThisMachine(client, { treeRoot, env = process.env } = {}) {
+  if (!client) return client;
+  const found = findClientExe({ treeRoot, env });
+  // A bridge older than exeError still names its lookup's failure among the fixes.
+  const exeFix = (fix) => fix === client.exeError || /exefile.exe|^no EVE client found|^EVEJS_CLIENT_EXE names|^--exe /.test(fix);
+  const fixes = (client.fixes || []).filter((fix) => !exeFix(fix));
+  if (found.error) fixes.push(found.error);
+  const others = (client.patch === "applied" || client.patch === "detected") && client.service !== "off";
+  return { ...client, ok: others && !found.error, exe: found.exe || null, exeSource: found.source || null,
+    exeError: found.error || null, fixes };
 }
 
 module.exports = {
@@ -221,6 +237,7 @@ module.exports = {
   PATCHES_DIR,
   REQUIRED_GATEWAY_CALLS,
   buildReport,
+  clientOnThisMachine,
   checkGatewayCalls,
   copyInfo,
   detectPatches,
