@@ -98,7 +98,11 @@ function removeHandshake(handshakePath, options = {}) {
 
 // handshakeExtra(): more fields for the handshake, read once at listen.
 // handshakePath null: no handshake file (`gridcheck gui` prints its URL instead).
-function createAgentBridgeHttp({ routes, port, handshakePath, log, serviceName = "agentBridge", handshakeExtra = null }) {
+// listenHost: where the bridge listens (loopback by default; 0.0.0.0 inside a container whose port is published).
+// advertiseHost: the host the handshake names for the CLI to reach it on (the listen host, or loopback for 0.0.0.0).
+function createAgentBridgeHttp({ routes, port, handshakePath, log, serviceName = "agentBridge", handshakeExtra = null,
+  listenHost = LOOPBACK_HOST, advertiseHost = null }) {
+  const advertised = advertiseHost || (listenHost === "0.0.0.0" || listenHost === "::" ? LOOPBACK_HOST : listenHost);
   const logger = log || { debug() {}, err() {} };
   const token = crypto.randomBytes(32).toString("hex");
   let server = null;
@@ -178,7 +182,7 @@ function createAgentBridgeHttp({ routes, port, handshakePath, log, serviceName =
       }
     }
     // processStartedAtMs: gridcheck log keeps a stock log line, which has no pid tag, by its time.
-    const payload = { ...extra, host: LOOPBACK_HOST, port: boundPort, token, pid: process.pid, startedAtMs: Date.now(),
+    const payload = { ...extra, host: advertised, port: boundPort, token, pid: process.pid, startedAtMs: Date.now(),
       processStartedAtMs: Math.round(Date.now() - process.uptime() * 1000) };
     fs.writeFileSync(handshakePath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
   }
@@ -195,15 +199,15 @@ function createAgentBridgeHttp({ routes, port, handshakePath, log, serviceName =
         });
       });
       created.once("error", (error) => {
-        logger.err(`[AgentBridge] could not listen on ${LOOPBACK_HOST}:${port}: ${error.message}`);
+        logger.err(`[AgentBridge] could not listen on ${listenHost}:${port}: ${error.message}`);
         if (handshakePath) removeHandshake(handshakePath, { onlyIfOurs: true });
         reject(error);
       });
-      created.listen(port, LOOPBACK_HOST, () => {
+      created.listen(port, listenHost, () => {
         server = created;
         const boundPort = created.address().port;
         writeHandshake(boundPort);
-        logger.debug(`[AgentBridge] listening on http://${LOOPBACK_HOST}:${boundPort} (token in ${handshakePath})`);
+        logger.debug(`[AgentBridge] listening on http://${listenHost}:${boundPort} (token in ${handshakePath})`);
         resolve(boundPort);
       });
     });

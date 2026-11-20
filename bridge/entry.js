@@ -289,12 +289,17 @@ function createService({ serverRoot, stock: givenStock = null, pluginsDir = DEFA
       routes,
       port: port === null ? resolvePort(env) : port,
       handshakePath: config.handshake,
+      // A server in a container (EVEJS_AGENT_BRIDGE_HOST=0.0.0.0, the port published): see docs/TREES.md, Docker.
+      listenHost: env.EVEJS_AGENT_BRIDGE_HOST || undefined,
+      advertiseHost: env.EVEJS_AGENT_BRIDGE_ADVERTISE_HOST || null,
       log,
       // What attach mode needs to find this server's gateway, log and store.
       handshakeExtra: () => ({
         treeRoot,
         ports: serverPorts(stock, env),
-        logFile: optional(() => stock.dataRoot.resolveDataRootPath("logs", "server.log")) || config.logFile,
+        logFile: env.EVEJS_AGENT_BRIDGE_HOST_LOG_FILE || optional(() => stock.dataRoot.resolveDataRootPath("logs", "server.log")) || config.logFile,
+        // The container the server runs in, by name: the CLI asks Docker whether it is up, as the host has no such pid.
+        ...(env.EVEJS_AGENT_BRIDGE_CONTAINER ? { container: env.EVEJS_AGENT_BRIDGE_CONTAINER } : {}),
         dataDir: optional(() => stock.storeRoot.resolveDataDir()) || config.dataDir,
         tool: copyInfo(),
         profiler: perf.profiler,

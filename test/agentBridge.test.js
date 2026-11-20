@@ -428,3 +428,27 @@ test("POST /trigger/<name> reaches the trigger with its body", async () => {
   const none = createAgentBridgeRoutes({ findSession: () => null, readGrid: () => null });
   assert.strictEqual(none.handle("POST", "/trigger/hunt", {}, {}).statusCode, 404, "without the plugin there is no route");
 });
+
+test("a bridge in a container listens on every address and names loopback in its handshake", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gridcheck-bridge-container-"));
+  const handshakePath = path.join(dir, "bridge.json");
+  const http = createAgentBridgeHttp({ routes: routesWith(), port: 0, handshakePath, listenHost: "0.0.0.0" });
+  const port = await http.start();
+  t.after(async () => {
+    await http.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const handshake = JSON.parse(fs.readFileSync(handshakePath, "utf8"));
+  // The CLI on the host reaches the published port on loopback, so the handshake names that, not 0.0.0.0.
+  assert.strictEqual(handshake.host, "127.0.0.1");
+  assert.strictEqual((await fetch(`http://127.0.0.1:${port}/health`)).status, 200);
+});
+
+test("a handshake that names a container is up only while Docker says the container runs", () => {
+  const treeState = require("../core/treeState");
+  // No such container (or no Docker): not up, whatever the pid in it.
+  assert.strictEqual(treeState.handshakeAlive({ port: 1, pid: process.pid, container: "gridcheck-no-such-container-x" }), false);
+  // Without a container the pid decides, as before.
+  assert.strictEqual(treeState.handshakeAlive({ port: 1, pid: process.pid }), true);
+  assert.strictEqual(treeState.handshakeAlive({ port: 0, pid: process.pid }), false);
+});

@@ -153,6 +153,25 @@ when no server is up. `--offline` always reads the files; `--json` prints the wh
 - **loadout**: whether the tree has the stock ship helpers `gridcheck loadout` builds a ship from.
   Without a running server it reads each module's exports from its file, without loading it.
 
+## A server in a Docker container
+
+Attach mode works with a server that runs in a container built from a tree gridcheck is installed in.
+The bridge listens inside the container, so it has to listen on every address and on a port the
+container publishes, and the CLI on the host has to find its handshake and log:
+
+| Container setting | Why |
+|---|---|
+| `EVEJS_AGENT_BRIDGE_HOST=0.0.0.0` | the bridge listens on every address (loopback inside a container is the container's) |
+| `EVEJS_AGENT_BRIDGE_PORT=<port>` and `-p 127.0.0.1:<port>:<port>` | a fixed bridge port, published on the host's loopback |
+| `EVEJS_AGENT_BRIDGE_CONTAINER=<container name>` | the handshake names the container; the CLI asks `docker inspect` whether it runs, as its pid is not the host's |
+| the host tree's `_local/agentBridge` mounted at the image's `<tree>/_local/agentBridge` | the handshake lands where the host CLI reads it |
+| a host folder mounted over the server's log folder, and `EVEJS_AGENT_BRIDGE_HOST_LOG_FILE=<host path to server.log>` | `watch`, `log` and `run` read the log on the host |
+| the game and gateway ports published on the same numbers | the handshake carries the container's own port numbers |
+
+The handshake names `127.0.0.1` for a bridge listening on `0.0.0.0`
+(`EVEJS_AGENT_BRIDGE_ADVERTISE_HOST` overrides it). The bridge's token is in the handshake only, so mount the
+handshake folder from the host and nowhere else.
+
 ## Stock EveJS's differences
 
 - Stock's logger writes no `[pid N]` tag, so `gridcheck log` keeps an untagged line by its timestamp:

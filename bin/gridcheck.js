@@ -49,6 +49,7 @@ const path = require("node:path");
 
 const { formatClock, formatGrid } = require("../core/format");
 const gridFilter = require("../core/gridFilter");
+const treeState = require("../core/treeState");
 const { formatInspect } = require("../core/inspect");
 const { collectIDs, createReorderBuffer, formatTimelineEvent, mentionsAny, parseLogLine } = require("../core/timeline");
 const { busyPorts, marketConfig, portsForTree, nativeClientPorts, serverEnvironment, usableListeners } = require("../core/ports");
@@ -204,7 +205,7 @@ function pidAlive(pid) {
 
 function readHandshake() {
   const handshake = readJSON(BRIDGE_HANDSHAKE_PATH);
-  return handshake && handshake.port && handshake.token && pidAlive(handshake.pid) ? handshake : null;
+  return handshake && handshake.port && handshake.token && treeState.handshakeAlive(handshake) ? handshake : null;
 }
 
 // The running server's log as its handshake reports it, else the config's.

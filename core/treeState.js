@@ -36,10 +36,34 @@ function pidAlive(pid) {
   }
 }
 
+// A server in a container names it in its handshake (EVEJS_AGENT_BRIDGE_CONTAINER): its pid is the container's, not the
+// host's, so whether it is up is asked of Docker. Answers are kept for two seconds; Docker being absent is "not up".
+const containerChecks = new Map();
+function containerRunning(name) {
+  const kept = containerChecks.get(name);
+  if (kept && Date.now() - kept.atMs < 2000) return kept.up;
+  let up = false;
+  try {
+    up = require("node:child_process").execFileSync("docker", ["inspect", "-f", "{{.State.Running}}", name],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000, windowsHide: true }).trim() === "true";
+  } catch (_error) {
+    up = false;
+  }
+  containerChecks.set(name, { up, atMs: Date.now() });
+  return up;
+}
+
+// The handshake's server is up: its container running, else its pid alive on this host.
+function handshakeAlive(handshake) {
+  if (!handshake || !handshake.port) return false;
+  if (typeof handshake.container === "string" && handshake.container) return containerRunning(handshake.container);
+  return pidAlive(Math.trunc(Number(handshake.pid) || 0));
+}
+
 // -> { pid, byE2e } for a server that is up, or null.
 function serverUpInfo(root, config = treeConfig.loadTreeConfig(root)) {
   const handshake = readJSON(config.handshake);
-  if (handshake && handshake.port && pidAlive(Math.trunc(Number(handshake.pid) || 0))) return { pid: Number(handshake.pid), byE2e: false };
+  if (handshakeAlive(handshake)) return { pid: Number(handshake.pid), byE2e: false };
   const run = readJSON(path.join(config.e2eDir, "run.json"));
   if (run && !run.stoppedAtMs && pidAlive(Math.trunc(Number(run.pid) || 0))) return { pid: Number(run.pid), byE2e: true };
   return null;
@@ -75,4 +99,6 @@ function prerequisites(root, config = treeConfig.loadTreeConfig(root)) {
   return rows;
 }
 
-module.exports = { prerequisites, serverUpInfo, serverUpReason };
+module.exports = {
+  handshakeAlive,
+  containerRunning, prerequisites, serverUpInfo, serverUpReason };
