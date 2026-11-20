@@ -167,6 +167,7 @@ container publishes, and the CLI on the host has to find its handshake and log:
 | the host tree's `_local/agentBridge` mounted at the image's `<tree>/_local/agentBridge` | the handshake lands where the host CLI reads it |
 | a host folder mounted over the server's log folder, and `EVEJS_AGENT_BRIDGE_HOST_LOG_FILE=<host path to server.log>` | `watch`, `log` and `run` read the log on the host |
 | the game and gateway ports published on the same numbers | the handshake carries the container's own port numbers |
+| `EVEJS_AGENT_BRIDGE_PUBLISHED_PORTS={"cdn":443}` | a listener the container publishes on another host port (here its CDN 26003 as the host's 443, which `client launch` needs); the handshake names the host port |
 
 The handshake names `127.0.0.1` for a bridge listening on `0.0.0.0`
 (`EVEJS_AGENT_BRIDGE_ADVERTISE_HOST` overrides it). The bridge's token is in the handshake only, so mount the

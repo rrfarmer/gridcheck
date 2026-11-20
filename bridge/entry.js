@@ -84,6 +84,18 @@ function resolvePort(env = process.env) {
   return configured > 0 && configured < 65536 ? configured : DEFAULT_PORT;
 }
 
+// A container publishes some of its listeners on other host ports (its CDN 26003 as the host's 443):
+// EVEJS_AGENT_BRIDGE_PUBLISHED_PORTS, a JSON object of listener name to host port, says so for the handshake.
+function publishedPorts(env = process.env) {
+  if (!env.EVEJS_AGENT_BRIDGE_PUBLISHED_PORTS) return {};
+  try {
+    const parsed = JSON.parse(env.EVEJS_AGENT_BRIDGE_PUBLISHED_PORTS);
+    return Object.fromEntries(Object.entries(parsed || {}).filter(([, port]) => Number.isInteger(port) && port > 0 && port < 65536));
+  } catch (_error) {
+    return {};
+  }
+}
+
 function optional(load) {
   try {
     return load();
@@ -296,7 +308,7 @@ function createService({ serverRoot, stock: givenStock = null, pluginsDir = DEFA
       // What attach mode needs to find this server's gateway, log and store.
       handshakeExtra: () => ({
         treeRoot,
-        ports: serverPorts(stock, env),
+        ports: { ...serverPorts(stock, env), ...publishedPorts(env) },
         logFile: env.EVEJS_AGENT_BRIDGE_HOST_LOG_FILE || optional(() => stock.dataRoot.resolveDataRootPath("logs", "server.log")) || config.logFile,
         // The container the server runs in, by name: the CLI asks Docker whether it is up, as the host has no such pid.
         ...(env.EVEJS_AGENT_BRIDGE_CONTAINER ? { container: env.EVEJS_AGENT_BRIDGE_CONTAINER } : {}),
